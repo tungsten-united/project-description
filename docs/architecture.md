@@ -1,7 +1,7 @@
 # Architecture: Voice Guidance pipeline
 
 Status: draft for team review. Diagrams are Mermaid, so they render on GitHub and diff cleanly.
-Everything here is a proposal. Models, hosting and the exact STT path are not decided. Decisions go through [Jev](https://docs.typesafe.ai/introduction), TypeSafe's decision model: the Command step is one Jev Choice question. Jev does not generate text, so sentences are templates and the worker's speak-or-stay-quiet rule is code. HTTP contracts: [contracts.md](contracts.md).
+Everything here is a proposal. Models and hosting are not decided. Speech in and out is ElevenLabs: Scribe v2 for speech to text, Flash v2.5 for text to speech, both called by the Orchestrator ([contracts.md section 4](contracts.md#4-orchestrator--elevenlabs)). Decisions go through [Jev](https://docs.typesafe.ai/introduction), TypeSafe's decision model: the Command step is one Jev Choice question. Jev does not generate text, so sentences are templates and the worker's speak-or-stay-quiet rule is code. HTTP contracts: [contracts.md](contracts.md).
 
 ## 1. Context
 
@@ -29,12 +29,13 @@ flowchart LR
 
   subgraph phone["Phone browser"]
     app["Web app<br/>React + Tailwind<br/>capture, Start/Stop, client state"]
-    tts["TTS playback<br/>speech queue, interruption"]
+    tts["Audio playback<br/>one audio element, queue, interruption<br/>browser TTS fallback"]
   end
 
   subgraph backend["Inference backend: GPU server behind HTTPS"]
     orch["Orchestrator<br/>auth, limits, client and session state<br/>new session on a new action, stale drop"]
-    stt["Speech to text<br/>audio to transcript"]
+    stt["Speech to text<br/>ElevenLabs Scribe v2"]
+    ttsapi["Text to speech<br/>ElevenLabs Flash v2.5, cached by text"]
     cmd["Command classifier<br/>Jev Choice: destination, cancel or unsupported"]
     buf[("Session frame buffer<br/>last 5 frames")]
     wrk["Worker<br/>runs nav, compares with previous output,<br/>speaks only on change"]
@@ -47,9 +48,11 @@ flowchart LR
   app -->|"POST audio, POST frames"| orch
   orch -->|"SSE: events"| app
   app --> tts
+  tts -->|"GET speech"| orch
   tts --> user
 
   orch <--> stt
+  orch <--> ttsapi
   orch <--> cmd
   orch --> buf
   orch --> wrk
@@ -61,7 +64,7 @@ flowchart LR
   orch -.-> trace
 ```
 
-Legend: `stt`, `cmd` (Jev, TypeSafe API) and `nav` (VLA) are the model calls. The worker, its comparison rule and the sentence templates are plain code inside the Orchestrator.
+Legend: `stt` and `ttsapi` (ElevenLabs), `cmd` (Jev, TypeSafe API) and `nav` (VLA) are the model calls. The worker, its comparison rule and the sentence templates are plain code inside the Orchestrator.
 
 ## 3. One pass through the pipeline
 
@@ -71,7 +74,7 @@ sequenceDiagram
   actor U as User
   participant P as Phone app
   participant O as Orchestrator
-  participant S as Speech to text
+  participant S as Speech to text (Scribe)
   participant C as Command classifier (Jev)
   participant K as Worker
   participant N as Navigation engine (VLA)
@@ -106,7 +109,10 @@ sequenceDiagram
       alt output differs from the previous output
         K-->>O: template sentence
         O-->>P: SSE guidance event (text, action, route)
-        P->>U: speaks sentence (TTS)
+        P->>O: GET speech (text)
+        Note over O: ElevenLabs Flash stream, or cache hit
+        O-->>P: audio/mpeg stream
+        P->>U: plays sentence
       else same output
         O-->>P: SSE heartbeat (quietReason unchanged)
         Note over P,U: nothing is spoken
@@ -124,9 +130,10 @@ sequenceDiagram
 | Component | Owns | Does not own |
 | --- | --- | --- |
 | Web app | Mic and camera capture, Start/Stop, client state machine, SSE client, adopting a new session's generation | Any model call, any secret |
-| TTS playback | Speaking received text, queue, interrupt on Stop, dedupe by guidance ID | Deciding what to say |
+| Audio playback | Playing received text through `GET /speech`, queue, interrupt on Stop, dedupe by guidance ID, browser TTS fallback | Deciding what to say |
 | Orchestrator | Auth, size limits, client, session and generation tracking, starting a new session on a new action, route validation, SSE out | Model internals |
-| Speech to text | Audio to transcript | Meaning of the request |
+| Speech to text (ElevenLabs Scribe v2) | Audio to transcript | Meaning of the request |
+| Text to speech (ElevenLabs Flash v2.5) | Text to MP3 stream, proxied and cached by the Orchestrator | Wording, timing |
 | Command classifier (Jev) | Turning a transcript into `start(destinationId)`, `cancel` or `unsupported`, with a confidence | Route progress |
 | Worker | Calling the navigation engine with the last 5 frames, comparing each output with the session's previous output, choosing guidance or heartbeat | Model internals, route definition |
 | Navigation engine | Last 5 frames + destination + step to a structured action | Wording, deciding whether to speak |
@@ -136,9 +143,9 @@ sequenceDiagram
 
 ## Open points
 
-1. **Speech to text.** The phone sends audio and Jev reads text, so the Orchestrator calls STT first. Which STT service is still open.
+1. **Speech to text.** Decided: ElevenLabs Scribe v2, batch, one call per utterance. Wispr Flow was evaluated and rejected: no self-serve API (see [contracts.md](contracts.md#wispr-flow-evaluated-not-used)).
 2. **Worker rule.** Speak when the output differs from the previous output, plus a reminder after 7 s of the same output. If that proves too rigid, ask Jev a yes/no (Noul) question. A second model call per frame adds latency.
-3. **"TTS command".** Drawn as text sent to the phone, which synthesizes speech. If browser TTS fails on the demo phone, add a server TTS component that returns audio on the same event stream.
+3. **Text to speech.** Decided: the phone gets text on SSE, then fetches audio from the Orchestrator, which streams ElevenLabs Flash v2.5. Browser TTS is the fallback when that fails. Still to measure on the demo phone: time from `guidance` event to first sound, cached and uncached.
 4. **Where the backend runs.** Tunnel to the local GPU server or a Google Cloud service in front of it. Decides who holds the auth secret.
 5. **Silent frames.** When the output is unchanged, the server sends a heartbeat or state-only event so the phone can tell "quiet by choice" from "connection lost".
 6. **Command classifier runs once per utterance.** After a session starts, frames go straight to the worker. A new voice command re-enters at step 2.

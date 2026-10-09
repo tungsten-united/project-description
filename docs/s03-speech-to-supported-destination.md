@@ -8,6 +8,6 @@ P0 | 45-90 min | Input owner (A), after S02 | Wave 2-3
 
 Purpose: understand a spoken destination and acknowledge it audibly. Use S06 for speech, or a mocked acknowledgement until S06 is done.
 
-Acceptance: process the S01b venue recordings using the chosen API or local speech model; map supported phrasing to a fixed destination ID; empty, noisy, or unsupported requests prompt retry instead of starting guidance; document one measured turnaround.
+Acceptance: process the S01b venue recordings with ElevenLabs Scribe v2 through the orchestrator ([contract](contracts.md#speech-to-text-scribe-v2)); Wispr Flow only if Scribe fails here and a key is granted; map supported phrasing to a fixed destination ID; empty, noisy, or unsupported requests prompt retry instead of starting guidance; document one measured turnaround.
 
 Follow the shared [Definition of Done](../agent.md#definition-of-done).
