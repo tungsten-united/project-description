@@ -2,11 +2,12 @@
 
 Status: draft for S01 team review. Derived from [architecture.md](architecture.md). Every limit and timeout below is a starting value that we tune on the demo phone, not a measured result.
 
-Three boundaries:
+Four boundaries:
 
 1. Phone ↔ Orchestrator: public HTTPS through the tunnel.
 2. Orchestrator ↔ Navigation engine (VLA): internal HTTP on the GPU server, not exposed through the tunnel.
 3. Orchestrator ↔ Jev (TypeSafe): the Command step. Server-side only.
+4. Orchestrator ↔ ElevenLabs: speech to text (Scribe) and text to speech (Flash). Server-side only. See [section 4](#4-orchestrator--elevenlabs).
 
 Two levels of state:
 
@@ -72,7 +73,7 @@ Called after the double tap or Start button. No body. No session exists until th
 }
 ```
 
-The phone speaks the destination prompt itself, built from `destinations[].label`.
+The phone builds the destination prompt from `destinations[].label` and plays it through [`GET /speech`](#get-v1clientsclientidspeechtokentext).
 
 ### `GET /v1/clients/{clientId}/events?token=…`
 
@@ -114,6 +115,17 @@ One camera frame while `navigating`. It joins the current session's buffer of th
 ```
 
 The phone sends the next frame after it gets the 202, so at most one upload is in flight. Only the newest frame triggers an evaluation. If a newer frame arrives before evaluation starts, the older one is not evaluated but stays in the buffer.
+
+### `GET /v1/clients/{clientId}/speech?token=…&text=…`
+
+Text to speech for anything the phone says: the destination prompt, and the `text` of `guidance`, `needs_input` and `error` events. The orchestrator proxies ElevenLabs and streams the audio back, so the ElevenLabs key never reaches the phone. It is a GET with the token in the query, like the SSE URL, so the phone can set it as the `src` of one reused `<audio>` element and playback starts while the audio is still arriving.
+
+- `text`: URL-encoded, at most 240 characters, otherwise `400 bad_request`.
+- `200`, `Content-Type: audio/mpeg`, chunked. MP3 because Safari and Chrome both play it from a plain `<audio>` element.
+- The orchestrator caches audio by `text` in memory. The sentence templates and the prompt are a small fixed set, so after the first time they cost no ElevenLabs call and no TTS latency.
+- On any non-2xx, or if `<audio>` fails to play, the phone speaks the same text with browser `speechSynthesis` (`output/browserSpeech.ts`). Speech never blocks guidance.
+- Stop: the phone calls `audio.pause()` and clears `src` before `POST /stop`, which also aborts the download.
+- Audio unlock: the Start tap plays the `<audio>` element once (iOS Safari only plays audio started inside a user gesture), then later playback is allowed.
 
 ### `POST /v1/clients/{clientId}/stop`
 
@@ -171,7 +183,7 @@ All non-2xx responses use the same body:
 | 415 | `unsupported_media_type` | Audio or image type not listed |
 | 422 | `expired_input` | `capturedAt` older than `maxInputAgeMs` |
 | 429 | `rate_limited` | Too many requests for this client |
-| 503 | `upstream_unavailable` | VLA, STT or Jev unreachable |
+| 503 | `upstream_unavailable` | VLA, ElevenLabs or Jev unreachable |
 
 ## SSE events
 
@@ -275,9 +287,9 @@ The validated result is an **output**: `{ action, direction, step, uncertain }`.
 
 `POST https://api.typesafe.ai/v1/systemone` with `Authorization: Bearer $TYPESAFE_API_KEY`. The key lives only in server env. The key and raw audio never go into the trace. TypeSafe returns `401` for a bad key, `422` for a bad request, and `429` or `529` when overloaded. Any failure is handled as described for each call. No call can move route state.
 
-### Speech to text (open point 1)
+### Speech to text
 
-The phone always sends audio, and Jev takes text or JSON state, not audio. So the orchestrator runs STT first: `POST $STT_URL` with the `audio` part, which returns `{ "transcript": string }`. Which STT service to use is still open. An STT failure sends an `error` event with stage `stt`. An empty transcript skips Jev and sends `needs_input` with `reason: "empty"`.
+The phone always sends audio, and Jev takes text or JSON state, not audio. So the orchestrator runs ElevenLabs Scribe first and passes its `text` to Jev as `spokenRequest`. The exact call is in [section 4](#speech-to-text-scribe-v2). An STT failure sends an `error` event with stage `stt`. An empty transcript skips Jev and sends `needs_input` with `reason: "empty"`.
 
 ### Command: one Choice question
 
@@ -339,6 +351,60 @@ Every output becomes the new previous output, whether it was spoken or not. A ne
 
 Jev does not write sentences, so the orchestrator uses a fixed sentence for each action: "Turn left.", "Keep going straight.", "You have arrived at the coffee counter.", "Wait a moment." or "Please hold still, I need a clearer view." Templates are instant, never fail, and stay within the 240-character limit.
 
+## 4. Orchestrator ↔ ElevenLabs
+
+One vendor and one key for both directions. `ELEVENLABS_API_KEY` lives only in server env (Secret Manager on Cloud Run) and is sent as the `xi-api-key` header. The key, raw audio and transcripts of failed calls never go into the trace.
+
+| Env var | Starting value | Use |
+| --- | --- | --- |
+| `ELEVENLABS_API_KEY` | secret | Both calls |
+| `ELEVENLABS_STT_MODEL` | `scribe_v2` | Speech to text |
+| `ELEVENLABS_TTS_MODEL` | `eleven_flash_v2_5` | Text to speech, the lowest-latency model |
+| `ELEVENLABS_VOICE_ID` | picked by the output owner (S06) from the voice library | Text to speech |
+| `SPEECH_LANGUAGE` | `en` | Sent to both, so Scribe skips language detection |
+
+### Speech to text: Scribe v2
+
+`POST https://api.elevenlabs.io/v1/speech-to-text`, `multipart/form-data`:
+
+| Part | Value |
+| --- | --- |
+| `model_id` | `$ELEVENLABS_STT_MODEL` |
+| `file` | The phone's `audio` part as received, `audio/webm` or `audio/mp4`. Scribe accepts both, so no transcoding. |
+| `language_code` | `$SPEECH_LANGUAGE` |
+| `tag_audio_events` | `false` |
+
+```json
+200 { "language_code": "en", "language_probability": 0.98, "text": "take me to the coffee", "words": [ … ] }
+```
+
+- Only `text` is used. It is trimmed; empty means `needs_input` with `reason: "empty"`.
+- Timeout 5 s. `401`, `422`, `429`, `5xx` or a timeout send an `error` event with stage `stt`, `retryable: true`.
+- This is the batch endpoint, one call per recorded utterance, which matches `POST /utterances`. Scribe v2 Realtime (WebSocket, partial transcripts) exists, but only pays off with always-listening input, which is out of scope.
+
+### Text to speech: Flash v2.5
+
+`POST https://api.elevenlabs.io/v1/text-to-speech/$ELEVENLABS_VOICE_ID/stream?output_format=mp3_44100_64`
+
+```json
+{ "text": "Turn left.", "model_id": "eleven_flash_v2_5", "language_code": "en" }
+```
+
+- `200` is a chunked MP3 stream. The orchestrator pipes it straight into the `GET /speech` response and keeps a copy in the cache once it completes.
+- Timeout 3 s to the first byte. Any failure returns `503 upstream_unavailable` from `GET /speech`, and the phone falls back to browser TTS.
+- `voice_settings` are left at the voice's stored defaults. Tune `speed` there if guidance feels slow on the demo phone.
+
+### Wispr Flow: evaluated, not used
+
+Wispr Flow was considered for speech to text and rejected for the demo:
+
+- No self-serve API. The developer page has no public docs; access is by emailing `enterprise@wisprflow.ai` for a key, billed on an enterprise account.
+- The one known model, `flow-v1`, is built for dictation into apps (cleanup and formatting of long text), not for short spoken commands.
+- Integrations transcode audio with ffmpeg first, so it likely does not take the phone's webm/mp4 directly. Request format and latency are unpublished.
+- ElevenLabs is already needed for TTS, so Scribe adds no new vendor, key or bill.
+
+Revisit only if Scribe fails the S03 acceptance on the S01b venue clips and Wispr grants a key in time.
+
 ## Run trace entry
 
 No media, tokens or prompts.
@@ -351,7 +417,7 @@ No media, tokens or prompts.
   transcript: string | null, command: string | null,
   engine: string, framesSent: number | null, action: Action | null, confidence: number | null, observation: string | null,
   spoke: boolean, text: string | null,
-  timingsMs: { upload?: number, stt?: number, command?: number, navigate?: number, total: number },
+  timingsMs: { upload?: number, stt?: number, command?: number, navigate?: number, tts?: number, total: number },
   dropped: "stale_generation" | "stale_sequence" | "expired_input" | "superseded" | null,
   error: string | null
 }
