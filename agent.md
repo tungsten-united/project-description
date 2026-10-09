@@ -105,6 +105,45 @@ Suggested four-person split; choose actual names together:
 - C, navigation/infrastructure: partner on model evaluation, local serving/tunnel, latency and cost measurement. Cards: S00, S01b, S04, S08.
 - D, output/interface: TTS, accessible activation/stop, demo presentation. Cards: S06, S07, S12 lead.
 
+## Codebase
+
+This repository holds the plan, the docs and the phone web app. The orchestrator backend is a separate Rust repo, [tungsten-united/orient-orchestrator](https://github.com/tungsten-united/orient-orchestrator). The navigation engine (VLA) is [tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine).
+
+### Commands
+
+Node 24 (`.nvmrc`). An npm workspace, so run everything from the repo root:
+
+```bash
+npm ci
+npm run dev -w apps/web                               # http://localhost:5173
+npm run check                                         # lint, typecheck, test, build: what CI runs
+npm test -w apps/web -- src/session/machine.test.ts   # one test file
+npm test -w apps/web -- -t "late events"              # tests whose name matches
+```
+
+`VITE_API_BASE_URL` (see `apps/web/.env.example`) points the app at a real orchestrator. When it is unset, the app runs in demo mode against `mockApi.ts`, a scripted in-browser orchestrator, not AI.
+
+### Architecture
+
+Read [docs/architecture.md](docs/architecture.md) for the pipeline and [docs/contracts.md](docs/contracts.md) for every HTTP and event shape. The contract is the shared source of truth between the phone, the orchestrator and the VLA. Change it first, then the code on both sides.
+
+The web app (`apps/web`, React + Tailwind + Vite):
+
+- `session/types.ts` mirrors the contract by hand. `OrchestratorApi` is the phone's only view of the backend. Two implementations: `httpApi.ts` (fetch + `EventSource`) and `mockApi.ts`.
+- `session/machine.ts` is a pure reducer for the client states (idle → prompting → listening → waiting → speaking → stopped). It ignores events that are invalid for the current state.
+- `session/useSession.ts` wires the reducer, the API and speech together. It owns the stale-result rules: a local run counter plus the server `generation` drop late events, guidance is deduplicated by `guidanceId`, and Stop silences speech locally before telling the server.
+- `output/browserSpeech.ts` is the `SpeechAdapter` over browser TTS.
+
+Deployment ([docs/deployment.md](docs/deployment.md)): the web app is static assets on Cloudflare (`apps/web/wrangler.jsonc`). `.github/workflows/web.yml` runs the checks on every PR and deploys on merge to `main`. It skips the deploy with a warning when Cloudflare secrets are missing. The orchestrator is planned for Cloud Run, and `infra/gcp/setup.sh` provisions it once. The VLA stays on a teammate GPU behind a tunnel.
+
+### Known drift
+
+The web app predates the latest contract. Do not copy its shapes into new code:
+
+- It still calls `/v1/sessions` and sends a `transcript`. The contract now uses `/v1/clients/{clientId}`, and the phone sends `audio`, which the orchestrator turns into text.
+- It drops every event whose `generation` differs from its own. The contract bumps `generation` on every new session, and the phone must adopt the newer value from the `state` event.
+- `docs/deployment.md` mentions a `services/orchestrator` folder and a `JEV_API_KEY` secret. The orchestrator is the separate repo above, and its Jev key variable is `TYPESAFE_API_KEY`.
+
 ## Kanban workflow
 
 The PDF proposes a starting board; it contains no verified implementation results. Do not mark work Done without evidence.
