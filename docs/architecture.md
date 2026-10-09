@@ -1,7 +1,7 @@
 # Architecture: Voice Guidance pipeline
 
 Status: draft for team review. Diagrams are Mermaid, so they render on GitHub and diff cleanly.
-Everything here is a proposal. Models, hosting and the exact STT path are not decided.
+Everything here is a proposal. Models, hosting and the exact STT path are not decided. The decision LLMs (command, decider, writer) go through the Jev API. HTTP contracts: [contracts.md](contracts.md).
 
 ## 1. Context
 
