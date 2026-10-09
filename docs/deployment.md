@@ -15,7 +15,7 @@ flowchart LR
 
   subgraph gcp["Google Cloud project"]
     run["Cloud Run: orient-orchestrator<br/>Session API, SSE, route + session state"]
-    sm[("Secret Manager<br/>JEV_API_KEY, upstream tokens")]
+    sm[("Secret Manager<br/>JEV_API_KEY, ELEVENLABS_API_KEY, upstream tokens")]
     ar[("Artifact Registry<br/>container images")]
     log["Cloud Logging<br/>sanitized run trace"]
   end
@@ -25,6 +25,7 @@ flowchart LR
   end
 
   jev(["Jev API<br/>Command LLM, writer, decider"])
+  el(["ElevenLabs API<br/>Scribe STT, Flash TTS"])
 
   user -->|"HTTPS: load the app"| assets
   user -->|"HTTPS: POST + SSE (CORS)"| run
@@ -35,6 +36,7 @@ flowchart LR
   ar -.->|"image"| run
   run -->|"HTTPS tunnel or private URL"| vla
   run -->|"HTTPS, server-side key"| jev
+  run -->|"HTTPS, server-side key"| el
 ```
 
 | Piece | Runs on | Why |
@@ -43,6 +45,7 @@ flowchart LR
 | Orchestrator | Google Cloud Run | Container, HTTPS URL out of the box, request timeout up to 60 minutes for SSE, scales to zero. |
 | Navigation engine (VLA) | Unchanged: teammate GPU behind a tunnel for now | Free and no cold start. Cloud Run GPU is the fallback, see section 5. |
 | Decision LLMs | Jev API | As in contracts.md. Key lives only in Secret Manager. |
+| Speech to text, text to speech | ElevenLabs API | As in contracts.md section 4. Key lives only in Secret Manager. Usage counts against the budget: check the plan's character and minute quota before demo day. |
 
 ## 2. Google Cloud resources
 
@@ -56,7 +59,7 @@ All created by [`infra/gcp/setup.sh`](../infra/gcp/setup.sh) except the service 
 | Service account (runtime) | `orient-orchestrator` | Reads secrets, writes logs. Nothing else. |
 | Service account (deploy) | `orient-deployer` | Pushes images and deploys Cloud Run. Used by GitHub Actions only. |
 | Workload Identity Federation | pool `github`, provider `github-oidc` | GitHub Actions authenticates with short-lived tokens, restricted to this repository. No JSON keys stored anywhere. |
-| Secret Manager | `JEV_API_KEY`, plus the tunnel credential if the VLA host needs one | Mounted as env vars on the service |
+| Secret Manager | `JEV_API_KEY`, `ELEVENLABS_API_KEY`, plus the tunnel credential if the VLA host needs one | Mounted as env vars on the service |
 | Budget alert | set in the Billing console | Not scriptable here without billing admin. Pick a cap that fits the EUR 50 pool and confirm it. |
 
 Service settings to decide when the backend exists:
