@@ -29,7 +29,7 @@ Keep one route, one navigation implementation, and one speech path. Defer free e
 
 Core flow: open app -> double tap -> hear destination prompt -> speak destination -> send captured request to server -> navigation/AI processing -> spoken guidance. Double tap again to stop. Recording-end behavior remains unresolved.
 
-VLAs, an Omni-VLA-like approach, and 2D navigation are exploration candidates, not selected technologies. Images alone do not provide a map. Voice API services and hosting Voxtral are alternatives. Do not assume a specific model, provider, framework, or cloud service has been selected.
+VLAs, an Omni-VLA-like approach, and 2D navigation are exploration candidates, not selected technologies. Images alone do not provide a map. Speech in and out is selected: ElevenLabs Scribe v2 (speech to text) and Flash v2.5 (text to speech), called only by the orchestrator; Wispr Flow was evaluated and rejected because it has no self-serve API ([contracts.md section 4](docs/contracts.md#4-orchestrator--elevenlabs)). Do not assume any other model, provider, framework, or cloud service has been selected.
 
 ## Kickoff decisions and unresolved choices
 
@@ -37,7 +37,7 @@ Recommended first 30 minutes:
 
 1. Pick one route, start point, and destination.
 2. Name one owner per pipeline and one integration lead.
-3. Choose a working speech input/output provider and one navigation candidate.
+3. Get an ElevenLabs API key into the orchestrator env (speech provider is chosen) and choose one navigation candidate.
 4. Agree the budget cap and who can provision inference.
 5. Fix the shared request/response contract before separate development.
 
@@ -132,7 +132,7 @@ The web app (`apps/web`, React + Tailwind + Vite):
 - `session/types.ts` mirrors the contract by hand. `OrchestratorApi` is the phone's only view of the backend. Two implementations: `httpApi.ts` (fetch + `EventSource`) and `mockApi.ts`.
 - `session/machine.ts` is a pure reducer for the client states (idle → prompting → listening → waiting → speaking → stopped). It ignores events that are invalid for the current state.
 - `session/useSession.ts` wires the reducer, the API and speech together. It owns the stale-result rules: a local run counter plus the server `generation` drop late events, guidance is deduplicated by `guidanceId`, and Stop silences speech locally before telling the server.
-- `output/browserSpeech.ts` is the `SpeechAdapter` over browser TTS.
+- `output/browserSpeech.ts` is the `SpeechAdapter` over browser TTS. Per the contract it becomes the fallback; the primary adapter plays `GET /v1/clients/{clientId}/speech` (ElevenLabs) in an `<audio>` element.
 
 Deployment ([docs/deployment.md](docs/deployment.md)): the web app is static assets on Cloudflare (`apps/web/wrangler.jsonc`). `.github/workflows/web.yml` runs the checks on every PR and deploys on merge to `main`. It skips the deploy with a warning when Cloudflare secrets are missing. The orchestrator is planned for Cloud Run, and `infra/gcp/setup.sh` provisions it once. The VLA stays on a teammate GPU behind a tunnel.
 
@@ -142,6 +142,7 @@ The web app predates the latest contract. Do not copy its shapes into new code:
 
 - It still calls `/v1/sessions` and sends a `transcript`. The contract now uses `/v1/clients/{clientId}`, and the phone sends `audio`, which the orchestrator turns into text.
 - It drops every event whose `generation` differs from its own. The contract bumps `generation` on every new session, and the phone must adopt the newer value from the `state` event.
+- Speech goes only through browser TTS. The contract plays ElevenLabs audio from `GET /speech` and keeps browser TTS as the fallback.
 - `docs/deployment.md` mentions a `services/orchestrator` folder and a `JEV_API_KEY` secret. The orchestrator is the separate repo above, and its Jev key variable is `TYPESAFE_API_KEY`.
 
 ## Kanban workflow
