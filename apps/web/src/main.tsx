@@ -5,6 +5,10 @@ import { App } from './App';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {location.pathname.toLowerCase() === '/tungsten' ? (
+      <img src="/tungsten.jpeg" alt="Tungsten" className="mx-auto max-h-screen" />
+    ) : (
+      <App />
+    )}
   </StrictMode>,
 );
