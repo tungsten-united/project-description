@@ -6,16 +6,21 @@ Three boundaries:
 
 1. Phone ↔ Orchestrator: public HTTPS through the tunnel.
 2. Orchestrator ↔ Navigation engine (VLA): internal HTTP on the GPU server, not exposed through the tunnel.
-3. Orchestrator ↔ Jev (TypeSafe): the Command step, and the Utterance decider if it ever moves off rules. Server-side only.
+3. Orchestrator ↔ Jev (TypeSafe): the Command step. Server-side only.
+
+Two levels of state:
+
+- A **client** is one phone from Start to Stop. It holds the token and the event stream.
+- A **session** is one spoken action: guidance to one destination. When speech-to-text gives a different action from the current session, the orchestrator starts a new session with an empty frame buffer and no previous output. The same action again keeps the current session.
 
 ## Conventions
 
 - Base path `/v1`. JSON bodies, UTF-8, camelCase.
-- IDs are UUID v4 strings. The server creates `sessionId`. The phone creates a `requestId` for every POST. A repeated `requestId` returns the original response and is not processed again.
-- `generation`: integer that starts at 1. The server increments it on stop and retry. Every POST and every SSE event carries it. Results from an older generation are dropped on both sides.
-- `sequence`: integer the phone increments on each utterance or frame in a session. The server keeps the highest one and drops anything older (latest frame wins).
-- `capturedAt`: epoch milliseconds **in server time**. The phone computes `offset = serverTime - Date.now()` from the session response and adds it, because phone and server clocks drift. Input older than `maxInputAgeMs` is rejected.
-- Auth: `POST /v1/sessions` returns a `sessionToken`. Send it as `Authorization: Bearer <token>`. `EventSource` cannot set headers, so the SSE URL uses `?token=`. The server redacts it from access logs.
+- IDs are UUID v4 strings. The server creates `clientId` and `sessionId`. The phone creates a `requestId` for every POST. A repeated `requestId` returns the original response and is not processed again.
+- `generation`: integer that starts at 1. The server increments it on stop, retry, error and every new session. The phone learns the new value from the event envelope. Every POST and every SSE event carries it. Results from an older generation are dropped on both sides.
+- `sequence`: integer the phone increments on each utterance or frame for the client. The server keeps the highest one and drops anything older (latest frame wins).
+- `capturedAt`: epoch milliseconds **in server time**. The phone computes `offset = serverTime - Date.now()` from the client response and adds it, because phone and server clocks drift. Input older than `maxInputAgeMs` is rejected.
+- Auth: `POST /v1/clients` returns a `clientToken`. Send it as `Authorization: Bearer <token>`. `EventSource` cannot set headers, so the SSE URL uses `?token=`. The server redacts it from access logs.
 - Route step and destination IDs are fixed strings from the server's route definition, for example `start`, `corridor`, `counter`.
 
 Shared types:
@@ -36,14 +41,14 @@ For S00. No auth.
 200 { "status": "ok", "version": "0.1.0" }
 ```
 
-### `POST /v1/sessions`
+### `POST /v1/clients`
 
-Starts a session after the double tap or Start button. No body.
+Called after the double tap or Start button. No body. No session exists until the user says a destination.
 
 ```json
 201 {
-  "sessionId": "6f1c…",
-  "sessionToken": "…",
+  "clientId": "6f1c…",
+  "clientToken": "…",
   "generation": 1,
   "serverTime": 1791561600000,
   "phase": "awaiting_destination",
@@ -61,37 +66,41 @@ Starts a session after the double tap or Start button. No body.
     "maxFrameBytes": 512000,
     "maxFrameEdgePx": 1280,
     "maxInputAgeMs": 3000,
-    "heartbeatMs": 5000
+    "heartbeatMs": 5000,
+    "navFrames": 5
   }
 }
 ```
 
 The phone speaks the destination prompt itself, built from `destinations[].label`.
 
-### `GET /v1/sessions/{sessionId}/events?token=…`
+### `GET /v1/clients/{clientId}/events?token=…`
 
 Server-sent events. On every connect or reconnect the server first sends a `state` event, so the phone can resync without a replay. See [SSE events](#sse-events).
 
-### `POST /v1/sessions/{sessionId}/utterances`
+### `POST /v1/clients/{clientId}/utterances`
 
-A spoken command: the destination, or "cancel". `multipart/form-data`:
+A spoken command as recorded audio: a destination, or "cancel". The orchestrator runs speech-to-text, then Jev. `multipart/form-data`:
 
 | Part | Type | Required |
 | --- | --- | --- |
 | `meta` | JSON `{ requestId, generation, sequence, capturedAt }` | yes |
-| `audio` | `audio/webm` (Chrome) or `audio/mp4` (Safari), at most `maxAudioMs` | one of `audio`/`transcript` |
-| `transcript` | text; for fixtures, tests and browser STT | one of `audio`/`transcript` |
-| `frame` | `image/jpeg`; used as the first navigation frame if the command is `start` | no |
+| `audio` | `audio/webm` (Chrome) or `audio/mp4` (Safari), at most `maxAudioMs` | yes |
+| `frame` | `image/jpeg`; the first frame of the session's buffer | no |
 
 ```json
 202 { "requestId": "…", "accepted": true }
 ```
 
-The outcome arrives on SSE: `needs_input`, `state` (phase `navigating`) followed by `guidance` or `heartbeat`, or `stop`.
+The outcome arrives on SSE:
 
-### `POST /v1/sessions/{sessionId}/frames`
+- A new action sends `state` with a new `sessionId` and a new `generation`, then `guidance` or `heartbeat` for each frame.
+- The same action as the current session sends `state` with the same `sessionId` and `generation`.
+- `cancel` sends `stop`. Anything unclear sends `needs_input`.
 
-One camera frame while `navigating`. `multipart/form-data`:
+### `POST /v1/clients/{clientId}/frames`
+
+One camera frame while `navigating`. It joins the current session's buffer of the last `navFrames` (5) frames. `multipart/form-data`:
 
 | Part | Type | Required |
 | --- | --- | --- |
@@ -104,21 +113,21 @@ One camera frame while `navigating`. `multipart/form-data`:
 202 { "requestId": "…", "accepted": true }
 ```
 
-The phone sends the next frame after it gets the 202, so at most one upload is in flight. The server also drops a frame if a newer one arrives before navigation starts on it.
+The phone sends the next frame after it gets the 202, so at most one upload is in flight. Only the newest frame triggers an evaluation. If a newer frame arrives before evaluation starts, the older one is not evaluated but stays in the buffer.
 
-### `POST /v1/sessions/{sessionId}/stop`
+### `POST /v1/clients/{clientId}/stop`
 
 ```json
 { "requestId": "…", "generation": 3 }
 ```
 
 ```json
-200 { "sessionId": "…", "generation": 4, "phase": "stopped" }
+200 { "clientId": "…", "generation": 4, "phase": "stopped", "sessionId": "…", "destinationId": "counter", "routeStepId": "corridor" }
 ```
 
 Stop always wins. It succeeds even with an old `generation` and is idempotent. The phone silences TTS and releases capture **before** sending it and does not wait for the reply. The server cancels in-flight model calls and sends a final `stop` event.
 
-### `POST /v1/sessions/{sessionId}/retry`
+### `POST /v1/clients/{clientId}/retry`
 
 For S10. It resumes from a state the server knows.
 
@@ -126,18 +135,18 @@ For S10. It resumes from a state the server knows.
 { "requestId": "…", "generation": 4, "from": "destination_prompt" }
 ```
 
-Like stop, retry accepts any `generation`, because an `error` event also increments it. `from`: `destination_prompt` returns to `awaiting_destination` at `startStepId`. `last_confirmed_step` returns to `navigating` at the last step the route logic validated.
+Like stop, retry accepts any `generation`, because an `error` event also increments it. `from`: `destination_prompt` returns to `awaiting_destination`. `destination_prompt` ends the session. `last_confirmed_step` keeps the same session and returns to `navigating` at the last step the route logic validated, with an empty frame buffer and no previous output.
 
 ```json
-200 { "sessionId": "…", "generation": 5, "phase": "navigating", "routeStepId": "corridor", "destinationId": "counter" }
+200 { "clientId": "…", "generation": 5, "phase": "navigating", "sessionId": "…", "destinationId": "counter", "routeStepId": "corridor" }
 ```
 
-### `GET /v1/sessions/{sessionId}/trace`
+### `GET /v1/clients/{clientId}/trace`
 
 For S08, the debug panel. Uses the same bearer token.
 
 ```json
-200 { "sessionId": "…", "entries": [ TraceEntry, … ] }
+200 { "clientId": "…", "entries": [ TraceEntry, … ] }
 ```
 
 See [Run trace entry](#run-trace-entry).
@@ -152,16 +161,16 @@ All non-2xx responses use the same body:
 
 | Status | `code` | When |
 | --- | --- | --- |
-| 400 | `bad_request` | Missing part, invalid `meta` |
+| 400 | `bad_request` | Missing part (including `audio`), invalid `meta` |
 | 401 | `unauthorized` | Missing or wrong token |
-| 404 | `session_not_found` | Unknown or expired session |
-| 409 | `stale_generation` | `generation` is not the current one (except stop) |
+| 404 | `client_not_found` | Unknown client |
+| 409 | `stale_generation` | `generation` is not the current one, for example after a new session (except stop and retry) |
 | 409 | `stale_sequence` | A newer `sequence` was already received |
-| 409 | `not_navigating` | Frame sent outside `navigating` |
+| 409 | `not_navigating` | Frame sent with no active session |
 | 413 | `payload_too_large` | Above `limits` |
 | 415 | `unsupported_media_type` | Audio or image type not listed |
 | 422 | `expired_input` | `capturedAt` older than `maxInputAgeMs` |
-| 429 | `rate_limited` | Too many requests for this session |
+| 429 | `rate_limited` | Too many requests for this client |
 | 503 | `upstream_unavailable` | VLA, STT or Jev unreachable |
 
 ## SSE events
@@ -169,17 +178,17 @@ All non-2xx responses use the same body:
 Every event's `data` contains the envelope, plus the fields for its type:
 
 ```ts
-{ type, eventId: string, sessionId, generation, requestId: string | null, emittedAt: number }
+{ type, eventId: string, clientId, sessionId: string | null, generation, requestId: string | null, emittedAt: number }
 ```
 
-The phone ignores any event whose `generation` is not its current one. That is how late results are blocked after Stop.
+The phone ignores any event whose `generation` is older than its current one, and adopts a newer one from `state`. That is how late results are blocked after Stop or a session change.
 
 | `type` | Extra fields | Phone does |
 | --- | --- | --- |
-| `state` | `phase, routeStepId, destinationId \| null` | Resync |
+| `state` | `phase, sessionId, destinationId, routeStepId` (null without a session) | Resync. A new `sessionId` means a new action started |
 | `needs_input` | `reason: "empty" \| "unsupported" \| "unclear"`, `text` | Speak `text`, listen again |
 | `guidance` | see below | Speak `text` once per `guidanceId` |
-| `heartbeat` | `phase, routeStepId, lastRequestId \| null, quietReason \| null` | Nothing spoken. Proves the connection is alive |
+| `heartbeat` | `state` fields, `lastRequestId \| null, quietReason \| null` | Nothing spoken. Proves the connection is alive |
 | `stop` | `reason: "user_stop" \| "voice_cancel" \| "arrived" \| "error"` | Stop capture and speech |
 | `error` | `code, stage, text, retryable` | Speak `text` ("Guidance is unavailable."), go to `stopped`, offer retry |
 
@@ -189,25 +198,26 @@ The phone ignores any event whose `generation` is not its current one. That is h
 {
   "type": "guidance",
   "guidanceId": "…",
-  "text": "Turn left at the coffee machine.",
+  "text": "Turn left.",
   "action": "turn",
   "direction": "left",
   "routeStepId": "corridor",
   "nextRouteStepId": "counter",
   "uncertain": false,
-  "debug": { "engine": "vla:<name>", "timingsMs": { "upload": 180, "navigate": 900, "decide": 1, "write": 400, "total": 1500 } }
+  "debug": { "engine": "vla:<name>", "timingsMs": { "upload": 180, "navigate": 900, "total": 1100 } }
 }
 ```
 
-`text` is at most 240 characters. `debug` is shown only in the debug panel, never spoken. `heartbeat` is sent for a frame the decider kept quiet (`quietReason` set) and every `heartbeatMs` when nothing else was sent. With no event for `3 × heartbeatMs`, the phone treats the connection as lost.
+`text` is at most 240 characters. `debug` is shown only in the debug panel, never spoken. `heartbeat` is sent for a frame the worker kept quiet (`quietReason: "unchanged"`) and every `heartbeatMs` when nothing else was sent. With no event for `3 × heartbeatMs`, the phone treats the connection as lost.
 
 ### Client states driven by these contracts
 
 | From | Trigger | To |
 | --- | --- | --- |
-| idle | Start, `POST /sessions` 201 | prompting |
+| idle | Start, `POST /clients` 201 | prompting |
 | prompting | Prompt finished speaking | listening |
 | listening | Recording ends, `POST /utterances` 202 | waiting |
+| waiting | `state` with a new `sessionId` | waiting (adopt the new `generation`, frame loop starts) |
 | waiting | `guidance` or `needs_input` | speaking |
 | waiting | `heartbeat` | waiting |
 | speaking | TTS done, phase `navigating` | waiting (frame loop continues) |
@@ -218,21 +228,26 @@ The phone ignores any event whose `generation` is not its current one. That is h
 
 ## 2. Orchestrator ↔ Navigation engine (VLA)
 
-`POST http://<gpu-host>:<port>/v1/navigate`, internal only. `multipart/form-data`:
+`POST http://<gpu-host>:<port>/v1/navigate`, internal only. Each call carries the session's last `NAV_FRAMES` (5) frames, oldest first. At the start of a session there are fewer, from 1 up to 5. `multipart/form-data`:
 
-- `meta`: JSON
+- `meta`: JSON. `frames` lists the images in the same order as the `frames` parts.
 
   ```json
   {
     "requestId": "…",
+    "sessionId": "…",
     "destinationId": "counter",
     "routeStepId": "corridor",
     "allowedNextStepIds": ["counter"],
-    "stepHint": "Coffee machine on the left, counter ahead."
+    "stepHint": "Coffee machine on the left, counter ahead.",
+    "frames": [
+      { "requestId": "…", "capturedAt": 1791561600000 },
+      { "requestId": "…", "capturedAt": 1791561600800 }
+    ]
   }
   ```
 
-- `frame`: `image/jpeg`, passed through unchanged.
+- `frames`: one `image/jpeg` part per frame, repeated under the same name, oldest first. Images are passed through unchanged.
 
 ```json
 200 {
@@ -248,19 +263,21 @@ The phone ignores any event whose `generation` is not its current one. That is h
 The orchestrator validates every response before using it:
 
 - If `proposedNextStepId` is not `routeStepId` or one of `allowedNextStepIds`, the step stays where it is and the action becomes `wait`.
-- `confidence` below `MIN_CONFIDENCE` (0.5) becomes `wait` with `uncertain: true`, and the writer asks for a clearer view.
+- `confidence` below `MIN_CONFIDENCE` (0.5) becomes `wait` with `uncertain: true`, and the template asks for a clearer view.
 - `observation` goes to the trace only.
-- Timeout 4 s: that frame is dropped. Three failures in a row send an `error` event with stage `navigate`.
+- Timeout 4 s: that evaluation is dropped. Three failures in a row in a session send an `error` event with stage `navigate`.
+
+The validated result is an **output**: `{ action, direction, step, uncertain }`. The worker compares it with the session's previous output, as described in [Worker](#worker-speak-or-stay-quiet).
 
 ## 3. Orchestrator ↔ Jev (TypeSafe)
 
-[Jev](https://docs.typesafe.ai/introduction) is TypeSafe's decision model. It takes a `state` and typed questions and returns calibrated answers: Choice, Score or Noul. It does not generate text. So Jev handles the Command step. The decider stays as rules for now, and the writer uses templates.
+[Jev](https://docs.typesafe.ai/introduction) is TypeSafe's decision model. It takes a `state` and typed questions and returns calibrated answers: Choice, Score or Noul. It does not generate text. So Jev handles the Command step. The worker's speak-or-stay-quiet rule is code, and the sentences are templates.
 
 `POST https://api.typesafe.ai/v1/systemone` with `Authorization: Bearer $TYPESAFE_API_KEY`. The key lives only in server env. The key and raw audio never go into the trace. TypeSafe returns `401` for a bad key, `422` for a bad request, and `429` or `529` when overloaded. Any failure is handled as described for each call. No call can move route state.
 
 ### Speech to text (open point 1)
 
-Jev takes text or JSON state, not audio. So an STT step runs first and produces `{ "transcript": string, "sttMs": number }`, or the phone sends a `transcript`. An empty transcript skips Jev and sends `needs_input` with `reason: "empty"`.
+The phone always sends audio, and Jev takes text or JSON state, not audio. So the orchestrator runs STT first: `POST $STT_URL` with the `audio` part, which returns `{ "transcript": string }`. Which STT service to use is still open. An STT failure sends an `error` event with stage `stt`. An empty transcript skips Jev and sends `needs_input` with `reason: "empty"`.
 
 ### Command: one Choice question
 
@@ -296,22 +313,29 @@ Runs once per utterance. The options are each destination ID plus `cancel` and `
 }
 ```
 
-- `choice` is a destination ID, which starts navigation, or `cancel`, which sends a `stop` event with `voice_cancel`, or `unsupported`, which sends `needs_input` with `reason: "unsupported"`.
+- `choice` is a destination ID, or `cancel`, which sends a `stop` event with `voice_cancel`, or `unsupported`, which sends `needs_input` with `reason: "unsupported"`.
+- A destination ID that differs from the current session's destination starts a new session. The same destination keeps the current session. After Stop or arrival, any destination starts a new session.
 - `confidence` below `JEV_MIN_CONFIDENCE` (0.5) sends `needs_input` with `reason: "unclear"`. A low-confidence answer is never acted on.
 - An HTTP error, an unknown `choice`, or a timeout after 3 s also sends `needs_input` with `reason: "unclear"`.
 - With no `TYPESAFE_API_KEY` set, the orchestrator matches keywords from the route aliases instead. This is for local development.
 
-### Utterance decider: rules
+## Worker: speak or stay quiet
+
+One worker per client evaluates the newest frame. It calls the navigation engine with the session's last 5 frames, validates the answer into an output, and compares that output with the session's **previous output**:
 
 ```json
-in  { "action": "turn", "direction": "left", "routeStepId": "corridor", "uncertain": false,
-      "lastSpoken": { "action": "continue", "routeStepId": "corridor", "msAgo": 4200 } }
-out { "speak": true, "reason": "action_changed" }
+previous { "action": "continue", "direction": null, "step": "corridor", "uncertain": false }
+output   { "action": "turn", "direction": "left", "step": "corridor", "uncertain": false }
+→ speak, reason "changed"
 ```
 
-The rules speak when the action changed, the step changed, `uncertain` was not already spoken, or `msAgo ≥ REPEAT_MS` (7000). `stop` and `arrived` are always spoken. If the rules prove too rigid, this becomes a Jev Noul question: "should the user be told something now?". The orchestrator would speak when `noul ≥ 0.5`, and fall back to the rules on failure.
+- There is no previous output (first evaluation in the session): send `guidance`, reason `first`.
+- Any field differs: send `guidance` with the template sentence, reason `changed`.
+- All fields are equal: send `heartbeat` with `quietReason: "unchanged"`. As a reminder, the same output is spoken again once `REPEAT_MS` (7000) has passed since the last spoken message.
 
-### Utterance writer: templates
+Every output becomes the new previous output, whether it was spoken or not. A new session starts with no previous output.
+
+### Sentence templates
 
 Jev does not write sentences, so the orchestrator uses a fixed sentence for each action: "Turn left.", "Keep going straight.", "You have arrived at the coffee counter.", "Wait a moment." or "Please hold still, I need a clearer view." Templates are instant, never fail, and stay within the 240-character limit.
 
@@ -321,13 +345,13 @@ No media, tokens or prompts.
 
 ```ts
 {
-  at: number, sessionId: string, generation: number, requestId: string,
-  kind: "utterance" | "frame" | "stop" | "retry",
+  at: number, clientId: string, sessionId: string | null, generation: number, requestId: string,
+  kind: "client" | "utterance" | "frame" | "stop" | "retry",
   clientRouteStepId: string | null, routeStepId: string, destinationId: string | null,
   transcript: string | null, command: string | null,
-  engine: string, action: Action | null, confidence: number | null, observation: string | null,
+  engine: string, framesSent: number | null, action: Action | null, confidence: number | null, observation: string | null,
   spoke: boolean, text: string | null,
-  timingsMs: { upload?: number, stt?: number, command?: number, navigate?: number, decide?: number, write?: number, total: number },
+  timingsMs: { upload?: number, stt?: number, command?: number, navigate?: number, total: number },
   dropped: "stale_generation" | "stale_sequence" | "expired_input" | "superseded" | null,
   error: string | null
 }
