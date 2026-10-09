@@ -6,7 +6,7 @@ Three boundaries:
 
 1. Phone ↔ Orchestrator: public HTTPS through the tunnel.
 2. Orchestrator ↔ Navigation engine (VLA): internal HTTP on the GPU server, not exposed through the tunnel.
-3. Orchestrator ↔ Jev API: the Command LLM, the Utterance decider (if it becomes an LLM) and the Utterance writer. Server-side only.
+3. Orchestrator ↔ Jev (TypeSafe): the Command step, and the Utterance decider if it ever moves off rules. Server-side only.
 
 ## Conventions
 
@@ -162,7 +162,7 @@ All non-2xx responses use the same body:
 | 415 | `unsupported_media_type` | Audio or image type not listed |
 | 422 | `expired_input` | `capturedAt` older than `maxInputAgeMs` |
 | 429 | `rate_limited` | Too many requests for this session |
-| 503 | `upstream_unavailable` | VLA or Jev API unreachable |
+| 503 | `upstream_unavailable` | VLA, STT or Jev unreachable |
 
 ## SSE events
 
@@ -252,52 +252,68 @@ The orchestrator validates every response before using it:
 - `observation` goes to the trace only.
 - Timeout 4 s: that frame is dropped. Three failures in a row send an `error` event with stage `navigate`.
 
-## 3. Orchestrator ↔ Jev API
+## 3. Orchestrator ↔ Jev (TypeSafe)
 
-The decision LLMs run through the Jev API. Its wire format is not in this repo yet, so this section defines the JSON each call puts in and must get back. One adapter in the orchestrator maps these to Jev requests and asks for structured or JSON output. `JEV_API_KEY` and `JEV_BASE_URL` live only in server env. Prompts, the key and raw audio never go into the trace.
+[Jev](https://docs.typesafe.ai/introduction) is TypeSafe's decision model. It takes a `state` and typed questions and returns calibrated answers: Choice, Score or Noul. It does not generate text. So Jev handles the Command step. The decider stays as rules for now, and the writer uses templates.
 
-Any Jev output that does not parse or fails validation is handled as described for each call. No call can move route state.
+`POST https://api.typesafe.ai/v1/systemone` with `Authorization: Bearer $TYPESAFE_API_KEY`. The key lives only in server env. The key and raw audio never go into the trace. TypeSafe returns `401` for a bad key, `422` for a bad request, and `429` or `529` when overloaded. Any failure is handled as described for each call. No call can move route state.
 
 ### Speech to text (open point 1)
 
-If the Jev API accepts audio, the Command call gets the audio directly. Otherwise an STT step runs first and produces `{ "transcript": string, "sttMs": number }`. Either way, the Command contract below takes the transcript. An empty transcript skips the call and sends `needs_input` with `reason: "empty"`.
+Jev takes text or JSON state, not audio. So an STT step runs first and produces `{ "transcript": string, "sttMs": number }`, or the phone sends a `transcript`. An empty transcript skips Jev and sends `needs_input` with `reason: "empty"`.
 
-### Command LLM
+### Command: one Choice question
 
-Runs once per utterance.
+Runs once per utterance. The options are each destination ID plus `cancel` and `unsupported`. The option descriptions are built from the route definition.
 
 ```json
-in  { "transcript": "take me to the coffee", "phase": "awaiting_destination",
-      "destinations": [ { "destinationId": "counter", "label": "coffee counter", "aliases": ["coffee", "bar"] },
-                        { "destinationId": "bathroom", "label": "bathroom", "aliases": ["toilet", "restroom"] } ] }
-out { "command": "start", "destinationId": "counter", "confidence": 0.93 }
+{
+  "model": "jev-latest",
+  "state": { "spokenRequest": "take me to the coffee", "sessionPhase": "awaiting_destination" },
+  "questions": {
+    "command": {
+      "type": "choice",
+      "instructions": "What is the blind user asking for in this spoken request? They are being guided indoors and can only be taken to the listed places.",
+      "criteria": {
+        "counter": "Wants to go to the coffee counter, for example: coffee, counter, bar.",
+        "bathroom": "Wants to go to the bathroom, for example: bathroom, toilet, restroom, wc.",
+        "cancel": "Wants to stop, cancel or end the guidance.",
+        "unsupported": "Wants something else: another place, a question, or nothing clear."
+      }
+    }
+  }
+}
 ```
 
-- `command` is `start`, `cancel` or `unsupported`.
-- A `destinationId` that is not in the list counts as `unsupported`.
-- Invalid output, or a timeout after 3 s, sends `needs_input` with `reason: "unclear"`.
+```json
+200 {
+  "model": "jev-1.13.0",
+  "answers": {
+    "command": { "type": "choice", "choice": "counter", "confidence": 0.86,
+                 "probabilities": { "counter": 0.9, "bathroom": 0.02, "cancel": 0.0, "unsupported": 0.08 } }
+  },
+  "usage": { "input_tokens": 180, "output_tokens": 12 }
+}
+```
 
-### Utterance decider
+- `choice` is a destination ID, which starts navigation, or `cancel`, which sends a `stop` event with `voice_cancel`, or `unsupported`, which sends `needs_input` with `reason: "unsupported"`.
+- `confidence` below `JEV_MIN_CONFIDENCE` (0.5) sends `needs_input` with `reason: "unclear"`. A low-confidence answer is never acted on.
+- An HTTP error, an unknown `choice`, or a timeout after 3 s also sends `needs_input` with `reason: "unclear"`.
+- With no `TYPESAFE_API_KEY` set, the orchestrator matches keywords from the route aliases instead. This is for local development.
 
-Starts as rules in the orchestrator. If it moves to the Jev API, the contract stays the same.
+### Utterance decider: rules
 
 ```json
 in  { "action": "turn", "direction": "left", "routeStepId": "corridor", "uncertain": false,
-      "lastSpoken": { "action": "continue", "routeStepId": "corridor", "text": "Keep going straight.", "msAgo": 4200 } }
+      "lastSpoken": { "action": "continue", "routeStepId": "corridor", "msAgo": 4200 } }
 out { "speak": true, "reason": "action_changed" }
 ```
 
-The rules speak when the action changed, the step changed, `uncertain` was not already spoken, or `msAgo ≥ REPEAT_MS` (7000). `stop` and `arrived` are always spoken. An LLM failure falls back to these rules.
+The rules speak when the action changed, the step changed, `uncertain` was not already spoken, or `msAgo ≥ REPEAT_MS` (7000). `stop` and `arrived` are always spoken. If the rules prove too rigid, this becomes a Jev Noul question: "should the user be told something now?". The orchestrator would speak when `noul ≥ 0.5`, and fall back to the rules on failure.
 
-### Utterance writer
+### Utterance writer: templates
 
-```json
-in  { "action": "turn", "direction": "left", "routeStepId": "corridor", "destinationLabel": "coffee counter",
-      "stepHint": "Coffee machine on the left, counter ahead.", "uncertain": false }
-out { "text": "Turn left at the coffee machine." }
-```
-
-`text` must be non-empty and at most 240 characters. If it is invalid, or the call times out after 2 s, the orchestrator uses a fixed template for that action, such as "Turn left." or "Please hold still, I need a clearer view." Guidance never stops because the writer failed.
+Jev does not write sentences, so the orchestrator uses a fixed sentence for each action: "Turn left.", "Keep going straight.", "You have arrived at the coffee counter.", "Wait a moment." or "Please hold still, I need a clearer view." Templates are instant, never fail, and stay within the 240-character limit.
 
 ## Run trace entry
 
