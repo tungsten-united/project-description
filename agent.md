@@ -2,11 +2,9 @@
 
 Project instructions derived from [Itnig-Voice-Guidance-Plan-Kanban.pdf](Itnig-Voice-Guidance-Plan-Kanban.pdf), the Itnig hackathon team working brief dated 9 October 2026.
 
-## Source and interpretation
+## Working baseline
 
-The brief analyzes `Itnig Spaces copy.m4a` (14:48) using automatic transcription. Overlapping speech and unclear technical terms limit certainty. Speaker names and individual assignments are not reliably attributable; verify them before assigning work.
-
-“Recorded” means an agreement or proposal supported by the audio. “Recommended” means a delivery choice added by the brief to make the work executable, not a confirmed team agreement. Follow the recommended plan as the working baseline while keeping unresolved choices explicit. Do not present proposals, estimates, or unverified implementation results as facts.
+Follow the recommended plan as the working baseline while keeping unresolved choices explicit. Recommendations are not confirmed team agreements. Do not present proposals, estimates, or unverified implementation results as facts.
 
 ## Goal and MVP scope
 
@@ -18,18 +16,18 @@ Recommended success criterion: on a real phone, start a session, state one suppo
 
 Keep one route, one navigation implementation, and one speech path. Defer free exploration, arbitrary destinations, always-listening commands, broad environment mapping, elaborate helper setup, and visual segmentation polish. Investigate simple haptics only after spoken output works.
 
-## Recorded decisions and proposals
+## Decisions and proposals
 
-| Item | Audio evidence and qualification |
+| Item | Scope and qualification |
 | --- | --- |
-| Voice-first web app | 00:18-00:44; 07:29-07:52. Camera input, microphone requests, speaker output, and minimal visual interface. |
-| Constrained first route | 01:36-02:35; 03:00-03:18. Counter/bathroom, predefined script, limited destinations. Tags at key places are suggested. |
-| Double tap to start/stop | 07:03-07:49; 08:24-08:35. Prioritized before real-time voice interaction; an MVP gesture proposal whose accessibility needs testing. |
-| Three functional pipelines | 02:35-04:05; 08:59-09:14. Voice input, navigation engine/LLM-VLA coordination, and TTS output. Parallel work is possible after agreeing a contract. |
-| Developer debug mode | 08:39-08:55. Useful app information and logs for diagnosis and agent-assisted development. |
-| Minimal interface | 05:35-07:10. Simple activation is favored. Segmentation display and helper setup are discussed, not established MVP requirements. |
+| Voice-first web app | Camera input, microphone requests, speaker output, and minimal visual interface. |
+| Constrained first route | Counter/bathroom, predefined script, limited destinations. Tags at key places are suggested. |
+| Double tap to start/stop | Prioritized before real-time voice interaction; an MVP gesture proposal whose accessibility needs testing. |
+| Three functional pipelines | Voice input, navigation engine/LLM-VLA coordination, and TTS output. Parallel work is possible after agreeing a contract. |
+| Developer debug mode | Useful app information and logs for diagnosis and agent-assisted development. |
+| Minimal interface | Simple activation is favored. Segmentation display and helper setup are not established MVP requirements. |
 
-Recorded core flow: open app -> double tap -> hear destination prompt -> speak destination -> send captured request to server -> navigation/AI processing -> spoken guidance. Double tap again to stop. Recording-end behavior remains unresolved.
+Core flow: open app -> double tap -> hear destination prompt -> speak destination -> send captured request to server -> navigation/AI processing -> spoken guidance. Double tap again to stop. Recording-end behavior remains unresolved.
 
 VLAs, an Omni-VLA-like approach, and 2D navigation are exploration candidates, not selected technologies. Images alone do not provide a map. Voice API services and hosting Voxtral are alternatives. Do not assume a specific model, provider, framework, or cloud service has been selected.
 
@@ -50,15 +48,15 @@ Recommended defaults:
 - Recording completion: bounded recording with an explicit stop control; defer always-listening interaction.
 - Activation accessibility: test double tap with a screen reader and provide one large, labeled Start/Stop control as well.
 - Errors: speak that guidance is unavailable, halt the session, and allow retry/stop.
-- Ownership: use roles until actual people are agreed; the audio does not reliably name assignees.
+- Ownership: use roles until actual people are agreed.
 
 ## Infrastructure and budget
 
-Recorded direction (10:48-11:24): start locally, then optimize. Serve small models from a teammate's computer through a tunnel for the first iteration; consider other inference options in the next build block if the initial approach works. APIs, remote inference, and GPU hosting remain options, not a finalized architecture.
+Start locally, then optimize. Serve small models from a teammate's computer through a tunnel for the first iteration; consider other inference options in the next build block if the initial approach works. APIs, remote inference, and GPU hosting remain options, not a finalized architecture.
 
-A EUR 50 pool is proposed and receives agreement at 10:11-10:28. Confirm the cap and split before spending. EUR 12.50 each for four people is an arithmetic interpretation of poorly transcribed speech, not a reliable quotation. Hardware and inference price estimates are unverified.
+A EUR 50 pool is proposed. Confirm the cap and split before spending. Hardware and inference price estimates are unverified.
 
-Run-log storage and shared access are discussed at 13:10-14:12. Local storage and Google Cloud credits are alternatives; no cloud service is definitively selected. Credit amounts and eligibility are unverified participant claims.
+Plan shared access to run logs. Local storage and Google Cloud credits are alternatives; no cloud service is definitively selected. Credit amounts and eligibility are unverified.
 
 ## Shared contract and implementation constraints
 
@@ -88,7 +86,7 @@ Serialize spoken instructions. Stop must cancel capture, requests, queued speech
 
 ## Delivery plan and responsibilities
 
-These phases and estimates are recommendations, not recorded commitments. Workstreams can run in parallel once the shared contract is agreed.
+These phases and estimates are recommendations, not confirmed commitments. Workstreams can run in parallel once the shared contract is agreed.
 
 | Phase | Outcome/gate | Suggested responsibility |
 | --- | --- | --- |
@@ -176,8 +174,6 @@ P1 | 30-45 min cap | Output/UI owner | Depends on S06.
 Purpose: explore simple vibration cues alongside speech.
 
 Acceptance: check device vibration support; define/document at most two clearly distinct cues and test comprehension with a sighted/supervised tester; unsupported devices retain full spoken guidance; keep directional vibration experimental until consistently understood.
-
-Audio discussion at 11:34-12:58 includes one/two pulses and continuous vibration, but no stable vocabulary is selected.
 
 ### S08: Debug panel and shared run trace
 
