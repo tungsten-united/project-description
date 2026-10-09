@@ -126,7 +126,7 @@ For S10. It resumes from a state the server knows.
 { "requestId": "…", "generation": 4, "from": "destination_prompt" }
 ```
 
-`from`: `destination_prompt` returns to `awaiting_destination` at `startStepId`. `last_confirmed_step` returns to `navigating` at the last step the route logic validated.
+Like stop, retry accepts any `generation`, because an `error` event also increments it. `from`: `destination_prompt` returns to `awaiting_destination` at `startStepId`. `last_confirmed_step` returns to `navigating` at the last step the route logic validated.
 
 ```json
 200 { "sessionId": "…", "generation": 5, "phase": "navigating", "routeStepId": "corridor", "destinationId": "counter" }
