@@ -119,101 +119,33 @@ P0 means needed for the controlled voice demo. P1 means useful exploration/suppo
 
 ## Story cards and acceptance criteria
 
-### S01: Scope and shared contract
+Read the relevant story before implementing or reviewing it. Each file in `docs` is the source of truth for that story.
 
-P0 | 20-30 min | Integration lead | No dependency.
+- [S01: Scope and shared contract][S01]
+- [S02: Camera, microphone, and activation][S02]
+- [S03: Speech to supported destination][S03]
+- [S04: Navigation model feasibility spike][S04]
+- [S05: Route-aware navigation engine][S05]
+- [S06: Spoken prompt and guidance][S06]
+- [S07: Define and test haptic output][S07]
+- [S08: Debug panel and shared run trace][S08]
+- [S09: Connect the full phone loop][S09]
+- [S10: Stop, stale output, and failure recovery][S10]
+- [S11: Supervised venue acceptance test][S11]
+- [S12: Freeze and rehearse the shareable demo][S12]
 
-Purpose: give the three pipelines one route and one shared contract.
-
-Acceptance: record start point, destination, allowed route steps, and fallback; name pipeline owners; commit request/response fixtures with session/request IDs and error states; confirm budget cap and who provisions inference.
-
-### S02: Camera, microphone, and activation
-
-P0 | 45-75 min | Input owner | Depends on S01.
-
-Purpose: activate the app and capture the inputs needed for guidance.
-
-Acceptance: handle camera/mic permission success and denial on the target phone; capture a fresh frame and bounded audio recording; provide labeled, usable Start/Stop; test proposed double tap with a screen reader; Stop releases capture.
-
-### S03: Speech to supported destination
-
-P0 | 45-90 min | Input owner | Depends on S01; live capture uses S02.
-
-Purpose: understand a spoken destination and acknowledge it audibly.
-
-Acceptance: process a real venue recording using the chosen API or local speech model; map supported phrasing to a fixed destination ID; empty, noisy, or unsupported requests prompt retry instead of starting guidance; document one measured turnaround.
-
-### S04: Navigation model feasibility spike
-
-P0 | 60-90 min cap | Engine pair | Depends on S01.
-
-Purpose: establish whether an engine gives usable guidance for the chosen route.
-
-Acceptance: test venue images and destination prompts; compare response usefulness, latency, and setup effort; select one engine and record limitations. If no candidate passes, choose a clearly labeled scripted route with AI scene assistance; do not claim autonomous navigation.
-
-### S05: Route-aware navigation engine
-
-P0 | 60-120 min | Engine owner | Depends on S04 and S01.
-
-Purpose: deliver one short instruction appropriate to the current route step.
-
-Acceptance: combine destination, fresh image, and route state; return structured action, concise guidance, and next state; uncertain scenes produce wait/stop and a request for a clearer view; demonstrate arrival; reject expired input instead of inventing progress.
-
-### S06: Spoken prompt and guidance
-
-P0 | 30-60 min | Output/UI owner | Depends on S01.
-
-Purpose: let the user hear the destination prompt and guidance without reading.
-
-Acceptance: after user activation, speak the opening prompt and a mocked engine response on the target phone; serialize speech; Stop cancels queued/current output; TTS failure leaves a recoverable app state.
-
-### S07: Define and test haptic output
-
-P1 | 30-45 min cap | Output/UI owner | Depends on S06.
-
-Purpose: explore simple vibration cues alongside speech.
-
-Acceptance: check device vibration support; define/document at most two clearly distinct cues and test comprehension with a sighted/supervised tester; unsupported devices retain full spoken guidance; keep directional vibration experimental until consistently understood.
-
-### S08: Debug panel and shared run trace
-
-P0 | 30-60 min | Infrastructure owner | Depends on S01.
-
-Purpose: show request failures and enable comparison between runs.
-
-Acceptance: show request ID, route step, transcript/destination, selected engine, action, stage timings, and error; all teammates can access a sanitized run trace through the agreed local setup; debug view is separate from primary interaction; exclude secrets and raw media by default.
-
-### S09: Connect the full phone loop
-
-P0 | 60-90 min | Integration lead and owners | Depends on S02, S03, S05, S06.
-
-Purpose: request a supported destination and hear guidance based on the current scene.
-
-Acceptance: phone reaches selected inference endpoint through HTTPS; activation -> request -> camera/engine -> spoken output works end to end; track stage latency; associate each result with the correct session/request; keep API credentials server-side.
-
-### S10: Stop, stale output, and failure recovery
-
-P0 | 30-60 min | Integration and engine | Depends on S09.
-
-Purpose: halt guidance and communicate when it cannot continue.
-
-Acceptance: Stop cancels capture, requests, and output; late responses cannot restart speech; handle timeout, offline state, denied permission, and uncertain scene; prevent contradictory overlapping instructions; retry begins from explicitly known session/route state.
-
-### S11: Supervised venue acceptance test
-
-P0 | 45-75 min | Tester and engine owner | Depends on S09, S10, S08.
-
-Purpose: demonstrate the bounded route with observable evidence.
-
-Acceptance: complete three supervised runs on the target phone; record observed failures and latency and fix blockers; include unsupported destination and uncertain scene; set an explicit acceptable latency based on testing. Do not ask a blind person to rely on the unvalidated prototype for mobility.
-
-### S12: Freeze and rehearse the shareable demo
-
-P0 | 30-60 min | Demo lead and all | Depends on S11.
-
-Purpose: communicate the value and limits in a short live demo.
-
-Acceptance: freeze a known working version; rehearse a 2-3 minute ask/observe/guide/stop scenario; show the AI contribution and disclose scripts/tags; prepare a labeled recorded fallback, endpoint restart notes, and simple budget check; explain free exploration and richer haptics as next steps.
+[S01]: docs/s01-scope-and-shared-contract.md
+[S02]: docs/s02-camera-microphone-and-activation.md
+[S03]: docs/s03-speech-to-supported-destination.md
+[S04]: docs/s04-navigation-model-feasibility-spike.md
+[S05]: docs/s05-route-aware-navigation-engine.md
+[S06]: docs/s06-spoken-prompt-and-guidance.md
+[S07]: docs/s07-define-and-test-haptic-output.md
+[S08]: docs/s08-debug-panel-and-shared-run-trace.md
+[S09]: docs/s09-connect-the-full-phone-loop.md
+[S10]: docs/s10-stop-stale-output-and-failure-recovery.md
+[S11]: docs/s11-supervised-venue-acceptance-test.md
+[S12]: docs/s12-freeze-and-rehearse-the-shareable-demo.md
 
 ## Definition of Done
 
