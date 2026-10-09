@@ -28,7 +28,7 @@ flowchart LR
 
   user -->|"HTTPS: load the app"| assets
   user -->|"HTTPS: POST + SSE (CORS)"| run
-  dns -.->|"app.&lt;domain&gt;"| assets
+  dns -.->|"orient.harshdeepsingh.dev"| assets
   dns -.->|"api.&lt;domain&gt; (optional, later)"| run
   run --> sm
   run --> log
@@ -77,9 +77,9 @@ You have a domain on Cloudflare. Options for the orchestrator URL, from least to
 | Cloudflare **orange-cloud proxy** to the `run.app` URL | `api.<domain>` through Cloudflare | Free, medium. Needs an Origin Rule to rewrite the Host header, since Cloud Run routes on it. | Avoid for SSE: Cloudflare returns a 524 if the origin sends nothing for about 125 s and this limit is not configurable on non-Enterprise plans. It works only if the server sends a heartbeat every 15 to 30 s. contracts.md already has a 5 s heartbeat, but we should not depend on it. |
 | Firebase Hosting rewrite | Custom domain | Cheap | Not recommended: a hard 60 s limit on rewrites to Cloud Run is *unverified* but would break SSE. |
 
-**The web app** gets `https://orient-web.<account>.workers.dev` immediately. A custom name such as `app.<domain>` is one line in `apps/web/wrangler.jsonc` (`routes` with `custom_domain: true`) because the zone is already on the same Cloudflare account. Cloudflare creates the DNS record and certificate.
+**The web app** gets `https://orient-web.<account>.workers.dev` immediately. A custom name such as `orient.harshdeepsingh.dev` is one line in `apps/web/wrangler.jsonc` (`routes` with `custom_domain: true`) because the zone is already on the same Cloudflare account. Cloudflare creates the DNS record and certificate.
 
-**Recommendation:** web on `app.<domain>`, orchestrator on its `run.app` URL, and move to `api.<domain>` through a domain mapping only if a tidy URL matters for the demo. Keeping the two on different origins means CORS must work from day one, which is also what the Cloudflare-to-Cloud-Run split requires.
+**Recommendation:** web on `orient.harshdeepsingh.dev`, orchestrator on its `run.app` URL, and move to `api.<domain>` through a domain mapping only if a tidy URL matters for the demo. Keeping the two on different origins means CORS must work from day one, which is also what the Cloudflare-to-Cloud-Run split requires.
 
 ## 4. CI/CD
 
@@ -130,7 +130,7 @@ Keep the tunnel for now, as agent.md recommends. Move to Cloud Run GPU only if t
 ## 6. Open decisions
 
 1. **GCP region.** `setup.sh` defaults to `europe-west1`, which is in the domain-mapping list. Confirm with the team, and check it matches the project's constraints.
-2. **Custom names.** Pick `app.<domain>` and whether you want `api.<domain>`.
+2. **Custom names.** Pick `orient.harshdeepsingh.dev` and whether you want `api.<domain>`.
 3. **Single instance.** Accept `max-instances=1` for the demo, or add a shared store.
 4. **Budget cap.** Confirm the EUR 50 pool and who owns the billing alert.
 5. **Production environment protection.** Add a required reviewer on the `production` GitHub environment if you want a gate before deploys.

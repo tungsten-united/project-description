@@ -6,7 +6,7 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
-  }
-  // Custom domain (add once the domain is chosen):
-  // "routes": [{ "pattern": "orient.example.com", "custom_domain": true }]
+  },
+  // The zone harshdeepsingh.dev is on this Cloudflare account, so DNS and the certificate are created automatically.
+  "routes": [{ "pattern": "orient.harshdeepsingh.dev", "custom_domain": true }]
 }

@@ -15,6 +15,17 @@ DEPLOY_SA="orient-deployer"
 POOL="github"
 PROVIDER="github-oidc"
 
+# New service accounts take a few seconds to become visible to IAM, so bindings are retried.
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n + 1))
+    if [ "$n" -ge 8 ]; then echo "Failed after $n attempts: $*" >&2; return 1; fi
+    echo "  waiting for IAM to catch up (attempt $n)..."
+    sleep 5
+  done
+}
+
 gcloud config set project "$PROJECT_ID" >/dev/null
 PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 
@@ -43,16 +54,16 @@ DEPLOY_EMAIL="$DEPLOY_SA@$PROJECT_ID.iam.gserviceaccount.com"
 
 echo "Runtime permissions (read secrets, write logs)..."
 for role in roles/secretmanager.secretAccessor roles/logging.logWriter; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  retry gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$RUNTIME_EMAIL" --role="$role" --condition=None >/dev/null
 done
 
 echo "Deployer permissions (push images, deploy Cloud Run)..."
 for role in roles/run.admin roles/artifactregistry.writer; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  retry gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$DEPLOY_EMAIL" --role="$role" --condition=None >/dev/null
 done
-gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_EMAIL" \
+retry gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_EMAIL" \
   --member="serviceAccount:$DEPLOY_EMAIL" --role="roles/iam.serviceAccountUser" >/dev/null
 
 echo "Workload Identity Federation for GitHub Actions (no long-lived keys)..."
@@ -65,7 +76,7 @@ gcloud iam workload-identity-pools providers describe "$PROVIDER" \
     --issuer-uri="https://token.actions.githubusercontent.com" \
     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
     --attribute-condition="assertion.repository=='$GITHUB_REPO'"
-gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_EMAIL" \
+retry gcloud iam service-accounts add-iam-policy-binding "$DEPLOY_EMAIL" \
   --role="roles/iam.workloadIdentityUser" \
   --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL/attribute.repository/$GITHUB_REPO" >/dev/null
 
