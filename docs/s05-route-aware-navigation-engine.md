@@ -1,6 +1,10 @@
 # S05: Route-aware navigation engine
 
-P0 | 60-120 min | Engine owner | Depends on S04 and S01.
+P0 | 60-120 min | Engine owner (B) | Wave 3
+
+- Depends on: S01, S04.
+- Parallel with: S03 (if still running), S07, S08.
+- Unblocks: S09.
 
 Purpose: deliver one short instruction appropriate to the current route step.
 

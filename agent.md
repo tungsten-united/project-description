@@ -78,6 +78,8 @@ Recommended minimum response fields:
 - Next route step.
 - Debug timing.
 
+Recommended client session states: idle -> prompting -> listening -> waiting -> speaking -> stopped. Define them in S01 with the request/response formats.
+
 Commit shared request/response fixtures with session/request IDs and error states. Associate results with the correct session and request. Only advance route state when route logic can justify it. Reject expired input and stale responses after Stop; do not invent route progress.
 
 Use HTTPS for the phone-to-inference connection. Keep API credentials server-side. Exclude secrets and raw camera/audio data from routine logs. Keep debug information separate from the primary interaction.
@@ -98,22 +100,44 @@ These phases and estimates are recommendations, not confirmed commitments. Works
 
 Suggested four-person split; choose actual names together:
 
-- A, input/integration: microphone/camera capture, API contract, browser-to-inference connection.
-- B, navigation: model evaluation, route decisions, uncertainty handling.
-- C, navigation/infrastructure: partner on model evaluation, local serving/tunnel, latency and cost measurement.
-- D, output/interface: TTS, accessible activation/stop, debug panel, demo presentation.
+- A, input/integration: microphone/camera capture, API contract, browser-to-inference connection. Cards: S01, S02, S03, S09 lead, S10.
+- B, navigation: model evaluation, route decisions, uncertainty handling. Cards: S01b, S04, S05, S10, S11.
+- C, navigation/infrastructure: partner on model evaluation, local serving/tunnel, latency and cost measurement. Cards: S00, S01b, S04, S08.
+- D, output/interface: TTS, accessible activation/stop, demo presentation. Cards: S06, S07, S12 lead.
 
 ## Kanban workflow
 
 The PDF proposes a starting board; it contains no verified implementation results. Do not mark work Done without evidence.
 
-- Ready: S01, S02, S03, S04.
-- Backlog: S05 through S12.
+- Ready: S00, S01.
+- Backlog: S01b through S12.
 - In progress, Review, Done: initially empty.
-- Pull after agreeing owners. Limit work in progress to one card per owner; the model spike may have two people.
+- Pull after agreeing owners. Limit work in progress to one card per owner; S01b and the model spike may have two people.
 - Review requires evidence and a peer check. Done requires acceptance criteria passed on the target phone.
 
-Pull order: S01 -> S02/S03/S04 in parallel -> S05/S06 with S08 alongside -> S09 -> S10/S11 -> S12. S07 is a bounded output spike and must not block the voice demo. Observe each card's dependencies even if it is in Ready.
+Cards in the same wave run in parallel; waves run in sequence. A card can start once all its dependencies are Done. Each story file lists what it depends on, what it runs alongside, and what it unblocks.
+
+| Wave | A (input/integration) | B (navigation) | C (navigation/infra) | D (output/UI) |
+| --- | --- | --- | --- | --- |
+| 1 | S01 | helps S01 | S00 | helps S01 |
+| 2 | S02 -> S03 | S01b -> S04 | S01b -> S04 | S06 |
+| 3 | S03 (if needed) | S05 | S08 | S07 (P1, optional) |
+| 4 | S09 lead | S09 | S09 | S09 |
+| 5 | S10 | S10 | prepares S11 | prepares S11 |
+| 6 | fixes blockers | S11 | fixes blockers | fixes blockers |
+| 7 | S12 | S12 | S12 | S12 lead |
+
+Dependencies:
+
+```
+S00 ─┬──────────────────────────► S02 ──► S03 ─┐
+S01 ─┼─► S01b ─► S04 ─► S05 ───────────────────┼─► S09 ─► S10 ─► S11 ─► S12
+     ├──────────────────────────► S06 ─────────┘                  ▲
+     │                             └─► S07 (P1, optional)         │
+     └─► S08 ─────────────────────────────────────────────────────┘
+```
+
+S01b is needed for S03 and S04 acceptance only; both can start setup before it is done. S07 must not block the voice demo.
 
 P0 means needed for the controlled voice demo. P1 means useful exploration/support; cut it if it threatens integration. Per-card effort estimates can overlap and exclude unexpected model/hosting problems.
 
@@ -121,29 +145,33 @@ P0 means needed for the controlled voice demo. P1 means useful exploration/suppo
 
 Read the relevant story before implementing or reviewing it. Each file in `docs` is the source of truth for that story.
 
+- [S00: Phone-reachable HTTPS skeleton][S00]
 - [S01: Scope and shared contract][S01]
-- [S02: Camera, microphone, and activation][S02]
+- [S01b: Venue sample capture][S01b]
+- [S02: Camera and microphone capture][S02]
 - [S03: Speech to supported destination][S03]
 - [S04: Navigation model feasibility spike][S04]
 - [S05: Route-aware navigation engine][S05]
-- [S06: Spoken prompt and guidance][S06]
+- [S06: Activation and spoken output][S06]
 - [S07: Define and test haptic output][S07]
 - [S08: Debug panel and shared run trace][S08]
-- [S09: Connect the full phone loop][S09]
-- [S10: Stop, stale output, and failure recovery][S10]
+- [S09: Connect the full phone loop and Stop][S09]
+- [S10: Failure messaging and retry][S10]
 - [S11: Supervised venue acceptance test][S11]
 - [S12: Freeze and rehearse the shareable demo][S12]
 
+[S00]: docs/s00-phone-reachable-https-skeleton.md
 [S01]: docs/s01-scope-and-shared-contract.md
-[S02]: docs/s02-camera-microphone-and-activation.md
+[S01b]: docs/s01b-venue-sample-capture.md
+[S02]: docs/s02-camera-and-microphone-capture.md
 [S03]: docs/s03-speech-to-supported-destination.md
 [S04]: docs/s04-navigation-model-feasibility-spike.md
 [S05]: docs/s05-route-aware-navigation-engine.md
-[S06]: docs/s06-spoken-prompt-and-guidance.md
+[S06]: docs/s06-activation-and-spoken-output.md
 [S07]: docs/s07-define-and-test-haptic-output.md
 [S08]: docs/s08-debug-panel-and-shared-run-trace.md
-[S09]: docs/s09-connect-the-full-phone-loop.md
-[S10]: docs/s10-stop-stale-output-and-failure-recovery.md
+[S09]: docs/s09-connect-the-full-phone-loop-and-stop.md
+[S10]: docs/s10-failure-messaging-and-retry.md
 [S11]: docs/s11-supervised-venue-acceptance-test.md
 [S12]: docs/s12-freeze-and-rehearse-the-shareable-demo.md
 

@@ -1,6 +1,10 @@
 # S07: Define and test haptic output
 
-P1 | 30-45 min cap | Output/UI owner | Depends on S06.
+P1 | 30-45 min cap | Output/UI owner (D) | Wave 3, optional
+
+- Depends on: S06.
+- Parallel with: S05, S08.
+- Unblocks: nothing. Drop it if it threatens S09.
 
 Purpose: explore simple vibration cues alongside speech.
 
