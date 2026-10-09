@@ -123,6 +123,14 @@ npm test -w apps/web -- -t "late events"              # tests whose name matches
 
 `VITE_API_BASE_URL` (see `apps/web/.env.example`) points the app at a real orchestrator. When it is unset, the app runs in demo mode against `mockApi.ts`, a scripted in-browser orchestrator, not AI.
 
+### Seeing the app and testing against the orchestrator
+
+- Desktop: `npm run dev -w apps/web`, then Chrome DevTools device mode (Cmd+Shift+M).
+- Phone: https://orient.harshdeepsingh.dev, built without `VITE_API_BASE_URL`, so demo mode. Phones only allow camera and microphone over HTTPS, so a LAN `http://` dev server is not a real test.
+- Orchestrator without a phone: in `orient-orchestrator`, `cargo run --example fakes`, then `STT_URL=http://localhost:8001/stt DEBUG_PAGE=1 cargo run` and open http://localhost:8000/debug.
+- Staging: released by hand from **Actions > Deploy staging** in `orient-orchestrator`, which creates `orient-orchestrator-staging` on Cloud Run (`<url>/debug`, `/v1/health`). To point the app at it, set `VITE_API_BASE_URL` in `apps/web/.env.local`, or as the repo variable for the Cloudflare build.
+- Phone to orchestrator end to end needs the web app drift below fixed first.
+
 ### Architecture
 
 Read [docs/architecture.md](docs/architecture.md) for the pipeline and [docs/contracts.md](docs/contracts.md) for every HTTP and event shape. The contract is the shared source of truth between the phone, the orchestrator and the VLA. Change it first, then the code on both sides.
@@ -143,6 +151,7 @@ The web app predates the latest contract. Do not copy its shapes into new code:
 - It still calls `/v1/sessions` and sends a `transcript`. The contract now uses `/v1/clients/{clientId}`, and the phone sends `audio`, which the orchestrator turns into text.
 - It drops every event whose `generation` differs from its own. The contract bumps `generation` on every new session, and the phone must adopt the newer value from the `state` event.
 - Speech goes only through browser TTS. The contract plays ElevenLabs audio from `GET /speech` and keeps browser TTS as the fallback.
+- The orchestrator does not call ElevenLabs yet. `transcribe()` in `src/pipeline.rs` still posts to a generic `STT_URL`, and utterances return 503 without it, so local runs and staging use the fake STT. It has no `GET /speech` endpoint either.
 - `docs/deployment.md` mentions a `services/orchestrator` folder and a `JEV_API_KEY` secret. The orchestrator is the separate repo above, and its Jev key variable is `TYPESAFE_API_KEY`.
 
 ## Kanban workflow
