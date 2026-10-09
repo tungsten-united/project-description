@@ -1,0 +1,15 @@
+{
+  "name": "orient",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Orient: voice-first indoor guidance for blind and low-vision people (hackathon prototype).",
+  "workspaces": ["apps/*"],
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "lint": "npm run lint -w apps/web",
+    "typecheck": "npm run typecheck -w apps/web",
+    "test": "npm run test -w apps/web",
+    "build": "npm run build -w apps/web",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build"
+  }
+}

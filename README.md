@@ -21,4 +21,17 @@ Hackathon prototype for Itnig, October 2026. The first demo covers one controlle
 - [agent.md](agent.md): scope, constraints, delivery plan and Definition of Done
 - [docs/architecture.md](docs/architecture.md): pipeline diagrams
 - [docs/contracts.md](docs/contracts.md): HTTP and event contracts
+- [docs/deployment.md](docs/deployment.md): where each piece runs, Google Cloud resources, CI/CD
 - [docs/](docs/): story cards S00 to S12
+
+## Develop
+
+Requires Node 24 (see `.nvmrc`).
+
+```bash
+npm ci
+npm run dev -w apps/web   # http://localhost:5173, demo mode with a scripted mock orchestrator
+npm run check             # lint, typecheck, test, build: the same steps CI runs
+```
+
+Set `VITE_API_BASE_URL` (see `apps/web/.env.example`) to point the app at a real orchestrator.

@@ -1,0 +1,12 @@
+{
+  // Static assets only: no Worker script. The orchestrator runs on Google Cloud.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "orient-web",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  // The zone harshdeepsingh.dev is on this Cloudflare account, so DNS and the certificate are created automatically.
+  "routes": [{ "pattern": "orient.harshdeepsingh.dev", "custom_domain": true }]
+}
