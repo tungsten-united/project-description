@@ -130,7 +130,11 @@ export function App({ api, speech, capture }: AppProps) {
       {debugStore && <SessionLogPanel store={debugStore} />}
 
       <header className="flex items-center justify-between pr-28 text-base text-ink-soft">
-        <span className="tracking-wide">Orient</span>
+        <span className="flex items-center gap-2.5">
+          {/* Decorative: the name next to it carries the meaning. CSS uppercases it, so a screen reader says "Orient". */}
+          <img src="/icons/icon-192.png" alt="" width={32} height={32} className="size-8 rounded-lg" />
+          <span className="text-lg font-bold tracking-[0.18em] text-slate uppercase">Orient</span>
+        </span>
         {!import.meta.env.VITE_API_BASE_URL && <span>Demo mode</span>}
       </header>
 

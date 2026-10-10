@@ -125,3 +125,16 @@ describe('session log panel', () => {
     vi.unstubAllEnvs();
   });
 });
+
+describe('header', () => {
+  it('shows the logo to the left of the name, as decoration', () => {
+    render(<App api={createMockApi(10)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    const header = screen.getByRole('banner');
+    const logo = header.querySelector('img');
+    const name = screen.getByText('Orient');
+    expect(logo).toHaveAttribute('src', '/icons/icon-192.png');
+    expect(logo).toHaveAttribute('alt', '');
+    expect(logo!.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(name).toHaveClass('uppercase');
+  });
+});
