@@ -71,9 +71,25 @@ export function cameraHeading(alpha: number, beta: number, gamma: number): numbe
 
 export type MotionPermission = 'granted' | 'denied' | 'unsupported';
 
+/** Which sensors have reported since start(). */
+export interface MotionReadiness {
+  motion: boolean;
+  orientation: boolean;
+}
+
+/** How long start-up waits for the first accelerometer sample. Sensors report at 50-60 Hz. */
+export const MOTION_READY_MS = 2000;
+/** Once the accelerometer reports, how much longer to wait for the compass, for the log only. */
+const ORIENTATION_GRACE_MS = 300;
+
 export interface MotionSource {
-  /** Asks for motion access (iOS) and starts listening. Call inside the Start tap. */
+  /**
+   * Asks for motion access (iOS, newer Chrome) and starts listening. Call inside the Start tap.
+   * Listens even after a denial: what decides is whether samples arrive (see ready()).
+   */
   start(): Promise<MotionPermission>;
+  /** Resolves once the accelerometer has reported since start(), or after `timeoutMs` without. */
+  ready(timeoutMs?: number): Promise<MotionReadiness>;
   stop(): void;
   /** Current motion, or null when no sensor has reported yet. `measuredAt` is local `Date.now()`. */
   snapshot(): Motion | null;
@@ -81,6 +97,7 @@ export interface MotionSource {
 
 export const noMotion: MotionSource = {
   start: async () => 'unsupported',
+  ready: async () => ({ motion: false, orientation: false }),
   stop() {},
   snapshot: () => null,
 };
@@ -135,15 +152,38 @@ export function createMotionTracker(stepLengthM = DEFAULT_STEP_LENGTH_M): Motion
   return {
     async start() {
       if (typeof window === 'undefined' || !('DeviceMotionEvent' in window)) return 'unsupported';
+      sawMotion = false; // a new run must prove its own samples
+      sawOrientation = false;
       // iOS (and newer Chrome) ask inside the tap. Both requests are made before either is awaited.
       const asks = [window.DeviceMotionEvent, window.DeviceOrientationEvent as unknown as PermissionAware | undefined].map(
         (E) => (E as PermissionAware | undefined)?.requestPermission?.().catch(() => 'denied' as const),
       );
       const results = await Promise.all(asks);
-      if (results.some((r) => r === 'denied')) return 'denied';
+      // Android Chrome 155 answered "denied" without a prompt on every start (2026-10-10). Listen anyway:
+      // if samples still arrive, motion works; if not, ready() says so and the session does not start.
       window.addEventListener('devicemotion', onMotion);
       window.addEventListener(orientationEvent, onOrientation as EventListener);
-      return 'granted';
+      return results.some((r) => r === 'denied') ? 'denied' : 'granted';
+    },
+    ready(timeoutMs = MOTION_READY_MS) {
+      return new Promise<MotionReadiness>((resolve) => {
+        const begun = Date.now();
+        let motionAt: number | null = null;
+        let timer: ReturnType<typeof setInterval> | undefined;
+        const check = () => {
+          const now = Date.now();
+          if (sawMotion && motionAt == null) motionAt = now;
+          const done =
+            (sawMotion && sawOrientation) ||
+            (motionAt != null && now - motionAt >= ORIENTATION_GRACE_MS) ||
+            now - begun >= timeoutMs;
+          if (!done) return false;
+          clearInterval(timer);
+          resolve({ motion: sawMotion, orientation: sawOrientation });
+          return true;
+        };
+        if (!check()) timer = setInterval(check, 50);
+      });
     },
     stop() {
       if (typeof window === 'undefined') return;

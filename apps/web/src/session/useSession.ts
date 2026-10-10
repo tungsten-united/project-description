@@ -16,7 +16,12 @@ const MAX_LISTEN_MS = 8000;
 /** Gap between frame uploads. The next frame goes only after the previous 202. */
 const FRAME_GAP_MS = 500;
 export const UNAVAILABLE_TEXT = 'Guidance is unavailable. Press Try again.';
-export const PERMISSION_TEXT = 'I need the camera and microphone. Please allow access, then press Try again.';
+export const PERMISSION_TEXT =
+  "I need the camera and microphone. Allow them in the browser's site settings. On iPhone, also check Settings, Chrome or Safari, Camera and Microphone. Then press Try again.";
+export const NO_PICTURE_TEXT = 'The camera is not giving a picture. Close other apps using it and press Try again.';
+export const MOTION_TEXT =
+  'I need the motion sensors. In Chrome, tap the icon left of the address, then Permissions, Motion sensors, Allow. Then press Try again.';
+export const MOTION_TEXT_IOS = 'I need motion and orientation access. Close this tab, open the page again and allow it.';
 export const NOT_HEARD_TEXT = 'I did not hear anything. Please say it again.';
 
 interface Run {
@@ -31,6 +36,11 @@ interface Run {
   lastEventAt: number;
 }
 
+/** iPhone and iPad, including iPadOS that reports itself as a Mac. */
+function isIos(): boolean {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+}
+
 function describeEnvironment(): string {
   const standalone = window.matchMedia?.('(display-mode: standalone)').matches ?? false;
   return `ua=${navigator.userAgent} secure=${String(window.isSecureContext)} standalone=${String(standalone)} viewport=${window.innerWidth}x${window.innerHeight}`;
@@ -40,13 +50,18 @@ interface SessionOptions {
   logger?: DebugLogger;
   /** Speed and heading sensors. Defaults to none, so `motion` is null in every request. */
   motion?: MotionSource;
+  /**
+   * No session without motion: Start stops with a spoken fix unless the accelerometer reports. The live app
+   * sets it, since nav-api's walked-distance gate needs the phone's steps; demo and mock modes have no sensors.
+   */
+  requireMotion?: boolean;
 }
 
 export function useSession(
   api: OrchestratorApi,
   speech: SpeechAdapter,
   capture: Capture,
-  { logger = noopLogger, motion = noMotion }: SessionOptions = {},
+  { logger = noopLogger, motion = noMotion, requireMotion = false }: SessionOptions = {},
 ) {
   const viewRef = useRef<ViewState>(initialView);
   const [view, setView] = useState<ViewState>(initialView);
@@ -171,22 +186,34 @@ export function useSession(
     speech.initializeAfterUserGesture();
     send({ type: 'start' });
     logger.log('info', 'start', describeEnvironment());
-    // Both permission prompts are started inside the tap. Denied motion only means motion is null.
-    const motionAccess = motion.start().catch(() => 'denied' as const);
+    // One prompt at a time: two at once left an iPhone (Chrome, iOS 27) with NotAllowedError and no prompt.
+    // Motion asks first, while the tap still counts (iOS only asks inside one). Camera and microphone need no tap.
+    const motionAccess = await motion.start().catch(() => 'denied' as const);
+    if (id !== r.id) return;
+    const sensors = motion.ready();
     try {
       await capture.acquire();
     } catch (e) {
       if (id === r.id) {
-        const denied = e instanceof CaptureError && e.code === 'permission_denied';
+        const code = e instanceof CaptureError ? e.code : null;
         const detail = e instanceof CaptureError ? e.detail : String(e);
-        halt('error', denied ? PERMISSION_TEXT : UNAVAILABLE_TEXT, detail);
+        const text = code === 'permission_denied' ? PERMISSION_TEXT : code === 'no_picture' ? NO_PICTURE_TEXT : UNAVAILABLE_TEXT;
+        halt('error', text, detail);
       }
       return;
     }
-    logger.log('info', 'motion_access', await motionAccess);
+    if (capture.describe) logger.log('info', 'capture_ready', capture.describe());
+    const seen = await sensors;
+    const sensed = `${motionAccess} samples=${seen.motion ? 'yes' : 'no'} orientation=${seen.orientation ? 'yes' : 'no'}`;
+    logger.log('info', 'motion_access', sensed);
     if (id !== r.id) {
       capture.release();
       motion.stop();
+      return;
+    }
+    // Every check passed or no session: without steps, nav-api cannot tell a walked hop from a glance.
+    if (requireMotion && !seen.motion) {
+      halt('error', isIos() ? MOTION_TEXT_IOS : MOTION_TEXT, `motion: ${sensed}`);
       return;
     }
     let client: ClientInfo;
@@ -213,7 +240,7 @@ export function useSession(
     send({ type: 'prompt_started', text: prompt });
     await say(prompt); // a failed prompt still shows as text, so continue
     if (id === r.id) send({ type: 'prompt_done' });
-  }, [api, capture, halt, logger, motion, onEvent, say, send, speech]);
+  }, [api, capture, halt, logger, motion, onEvent, requireMotion, say, send, speech]);
 
   const finishRecording = useCallback(async () => {
     const r = run.current;
