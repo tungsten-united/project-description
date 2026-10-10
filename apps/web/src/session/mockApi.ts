@@ -71,7 +71,7 @@ export function createMockApi(stepMs = 2500): OrchestratorApi {
         clear();
       };
     },
-    async sendUtterance() {
+    async sendInput() {
       // A new action starts a new session and bumps the generation, like the real server.
       generation += 1;
       sessionId = crypto.randomUUID();

@@ -1,4 +1,4 @@
-import { ApiError, type ClientInfo, type FrameInput, type OrchestratorApi, type ServerEvent, type UtteranceInput } from './types';
+import { ApiError, type ClientInfo, type FrameInput, type OrchestratorApi, type ServerEvent, type UserInput } from './types';
 
 /** Client for docs/contracts.md section 1. */
 export function createHttpApi(baseUrl: string): OrchestratorApi {
@@ -52,7 +52,7 @@ export function createHttpApi(baseUrl: string): OrchestratorApi {
       return () => source.close();
     },
 
-    async sendUtterance(client, input: UtteranceInput) {
+    async sendInput(client, input: UserInput) {
       const form = new FormData();
       form.set(
         'meta',
@@ -63,9 +63,9 @@ export function createHttpApi(baseUrl: string): OrchestratorApi {
           capturedAt: serverTime(client, input.capturedAt),
         }),
       );
-      form.set('audio', input.audio, input.audio.type.includes('mp4') ? 'utterance.mp4' : 'utterance.webm');
+      form.set('audio', input.audio, input.audio.type.includes('mp4') ? 'input.mp4' : 'input.webm');
       if (input.frame) form.set('frame', input.frame, 'frame.jpg');
-      await post(`${root}/clients/${client.clientId}/utterances`, { headers: auth(client), body: form });
+      await post(`${root}/clients/${client.clientId}/inputs`, { headers: auth(client), body: form });
     },
 
     async sendFrame(client, input: FrameInput) {

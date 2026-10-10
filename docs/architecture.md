@@ -143,10 +143,10 @@ sequenceDiagram
 
 ## Open points
 
-1. **Speech to text.** Decided: ElevenLabs Scribe v2, batch, one call per utterance. Wispr Flow was evaluated and rejected: no self-serve API (see [contracts.md](contracts.md#wispr-flow-evaluated-not-used)).
+1. **Speech to text.** Decided: ElevenLabs Scribe v2, batch, one call per input. Wispr Flow was evaluated and rejected: no self-serve API (see [contracts.md](contracts.md#wispr-flow-evaluated-not-used)).
 2. **Worker rule.** Speak when the output differs from the previous output, plus a reminder after 7 s of the same output. If that proves too rigid, ask Jev a yes/no (Noul) question. A second model call per frame adds latency.
 3. **Text to speech.** Decided: the phone gets text on SSE, then fetches audio from the Orchestrator, which streams ElevenLabs Flash v2.5. Browser TTS is the fallback when that fails. Still to measure on the demo phone: time from `guidance` event to first sound, cached and uncached.
 4. **Where the backend runs.** Tunnel to the local GPU server or a Google Cloud service in front of it. Decides who holds the auth secret.
 5. **Silent frames.** When the output is unchanged, the server sends a heartbeat or state-only event so the phone can tell "quiet by choice" from "connection lost".
-6. **Command classifier runs once per utterance.** After a session starts, frames go straight to the worker. A new voice command re-enters at step 2.
+6. **Command classifier runs once per input.** After a session starts, frames go straight to the worker. A new voice command re-enters at step 2.
 7. **Fewer than 5 frames.** At the start of a session the navigation engine gets 1 to 4 frames. The VLA owner should confirm it handles that, or the worker should wait for 5.

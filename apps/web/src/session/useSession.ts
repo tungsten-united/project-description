@@ -130,7 +130,7 @@ export function useSession(
           halt('error', event.text);
           return;
         default:
-          return; // heartbeat only proves the stream is alive
+          return; // heartbeat only proves the stream is alive; log is for the debug panel
       }
     },
     [halt, logger, send, speech],
@@ -205,7 +205,7 @@ export function useSession(
     }
     r.sequence += 1;
     try {
-      await api.sendUtterance(client, {
+      await api.sendInput(client, {
         requestId: crypto.randomUUID(),
         generation: r.generation,
         sequence: r.sequence,
