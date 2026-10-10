@@ -20,6 +20,19 @@ interface Options {
   quality?: number;
 }
 
+/** Best-effort permission states, so a blocked site can be told apart from a dismissed prompt. */
+async function permissionStates(): Promise<string> {
+  const read = async (name: string) => {
+    try {
+      const status = await navigator.permissions.query({ name: name as PermissionName });
+      return status.state;
+    } catch {
+      return 'unknown';
+    }
+  };
+  return `microphone=${await read('microphone')}, camera=${await read('camera')}`;
+}
+
 /** Real microphone and rear camera. Released completely on release(). */
 export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options = {}): Capture {
   let stream: MediaStream | null = null;
@@ -33,11 +46,12 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
     try {
       return await md.getUserMedia({ audio: true, video: { facingMode: { ideal: 'environment' } } });
     } catch (e) {
-      const name = (e as DOMException).name;
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        throw new CaptureError('permission_denied', 'Camera or microphone permission was denied.');
+      const err = e as DOMException;
+      const detail = `${err.name}: ${err.message} (${await permissionStates()}, secure=${String(window.isSecureContext)})`;
+      if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+        throw new CaptureError('permission_denied', 'Camera or microphone permission was denied.', detail);
       }
-      throw new CaptureError('unavailable', 'Camera or microphone is not available.');
+      throw new CaptureError('unavailable', 'Camera or microphone is not available.', detail);
     }
   }
 

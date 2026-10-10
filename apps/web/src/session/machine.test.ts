@@ -58,6 +58,12 @@ describe('client state machine', () => {
     expect(v.spoken).toBe('');
   });
 
+  it('keeps technical detail from an error stop and clears it on restart', () => {
+    const stopped = run([{ type: 'start' }, { type: 'stop', reason: 'error', error: 'x', detail: 'NotAllowedError: denied' }]);
+    expect(stopped.detail).toBe('NotAllowedError: denied');
+    expect(reduce(stopped, { type: 'start' }).detail).toBeNull();
+  });
+
   it('allows a new session after stop', () => {
     const v = run([{ type: 'start' }, { type: 'stop', reason: 'error', error: 'x' }, { type: 'start' }]);
     expect(v.state).toBe('prompting');

@@ -52,7 +52,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
 
   /** Stop wins: silence and release locally first, then tell the server without waiting. */
   const halt = useCallback(
-    (reason: StopReason, error?: string) => {
+    (reason: StopReason, error?: string, detail?: string) => {
       const r = run.current;
       r.id += 1; // invalidates every pending callback from the previous run
       speech.stop();
@@ -61,7 +61,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
       r.unsubscribe?.();
       r.unsubscribe = null;
       setNavigating(false);
-      send({ type: 'stop', reason, error });
+      send({ type: 'stop', reason, error, detail });
       const client = r.client;
       r.client = null;
       r.sessionId = null;
@@ -134,7 +134,11 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
     try {
       await capture.acquire(); // inside the tap, so the browser will show its permission prompt
     } catch (e) {
-      if (id === r.id) halt('error', e instanceof CaptureError && e.code === 'permission_denied' ? PERMISSION_TEXT : UNAVAILABLE_TEXT);
+      if (id === r.id) {
+        const denied = e instanceof CaptureError && e.code === 'permission_denied';
+        const detail = e instanceof CaptureError ? e.detail : String(e);
+        halt('error', denied ? PERMISSION_TEXT : UNAVAILABLE_TEXT, detail);
+      }
       return;
     }
     if (id !== r.id) {
