@@ -21,7 +21,7 @@ flowchart LR
   end
 
   subgraph venue["GPU host: teammate machine or Cloud Run GPU"]
-    vla["Navigation engine (VLA)<br/>POST /v1/navigate"]
+    vla["Navigation engine<br/>POST /v1/navigate (not served yet)"]
   end
 
   jev(["Jev API<br/>Command LLM, writer, decider"])
@@ -43,7 +43,7 @@ flowchart LR
 | --- | --- | --- |
 | Web app (React + Tailwind) | Cloudflare, Workers static assets | Free, global, HTTPS by default (phones need HTTPS for camera and microphone), deploys in seconds. No Worker script: assets only. |
 | Orchestrator | Google Cloud Run | Container, HTTPS URL out of the box, request timeout up to 60 minutes for SSE, scales to zero. |
-| Navigation engine (VLA) | Unchanged: teammate GPU behind a tunnel for now | Free and no cold start. Cloud Run GPU is the fallback, see section 5. |
+| Navigation engine | `nav-api` on Cloud Run (maps, recordings; team bucket), models on a teammate GPU (helium) behind a tunnel | Free GPU, no cold start. `POST /v1/navigate` is not served yet. Cloud Run GPU is the fallback, see section 5. |
 | Decision LLMs | Jev API | As in contracts.md. Key lives only in Secret Manager. |
 | Speech to text, text to speech | ElevenLabs API | As in contracts.md section 4. Key lives only in Secret Manager. Usage counts against the budget: check the plan's character and minute quota before demo day. |
 
@@ -59,7 +59,7 @@ All created by [`infra/gcp/setup.sh`](../infra/gcp/setup.sh) except the service 
 | Service account (runtime) | `orient-orchestrator` | Reads secrets, writes logs. Nothing else. |
 | Service account (deploy) | `orient-deployer` | Pushes images and deploys Cloud Run. Used by GitHub Actions only. |
 | Workload Identity Federation | pool `github`, provider `github-oidc` | GitHub Actions authenticates with short-lived tokens, restricted to this repository. No JSON keys stored anywhere. |
-| Secret Manager | `TYPESAFE_API_KEY`, `ELEVENLABS_API_KEY`, plus the tunnel credential if the VLA host needs one | Mounted as env vars on the service |
+| Secret Manager | `TYPESAFE_API_KEY`, `ELEVENLABS_API_KEY`, plus the tunnel credential if the navigation engine host needs one | Mounted as env vars on the service |
 | Budget alert | set in the Billing console | Not scriptable here without billing admin. Pick a cap that fits the EUR 50 pool and confirm it. |
 
 Service settings to decide when the backend exists:
@@ -128,7 +128,7 @@ Secrets go in with `gh secret set <NAME>`, which prompts for the value and does 
 | Reliability | Depends on laptop power, venue Wi-Fi and the tunnel | Managed |
 | Constraints | None | L4 listed for a few regions (europe-west1 and europe-west4 among them). 4 vCPU and 16 GiB minimum, default quota of 3 GPUs per region. Check GA status and pricing first: *unverified*. |
 
-Keep the tunnel for now, as agent.md recommends. Move to Cloud Run GPU only if the tunnel proves unreliable, since it spends the budget. The VLA contract (`POST /v1/navigate`) is the same either way, so the orchestrator does not change.
+Keep the tunnel for now, as agent.md recommends. Move to Cloud Run GPU only if the tunnel proves unreliable, since it spends the budget. The navigation contract (`POST /v1/navigate`) is the same either way, so the orchestrator does not change.
 
 ## 6. Open decisions
 
