@@ -76,7 +76,6 @@ describe('index.html', () => {
     const favicon = findPng('/favicon-32.png');
     expect(favicon).toBeDefined();
     expect(pngSize(favicon!)).toEqual({ width: 32, height: 32 });
-    expect(indexHtml).toContain('href="/favicon.svg"');
   });
 });
 

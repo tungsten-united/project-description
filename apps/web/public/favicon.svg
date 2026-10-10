@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Orient">
-  <!-- Orient mark: a compass ring around a direction arrow. Palette: slate #141413, ivory #faf9f5, clay #d97757.
-       The PNG icons are rasterized from this geometry. Maskable/apple variants drop the rounded corners (rx=0). -->
-  <rect width="512" height="512" rx="112" fill="#141413" />
-  <circle cx="256" cy="256" r="190" fill="none" stroke="#faf9f5" stroke-width="28" />
-  <polygon points="256,124 356,380 256,322 156,380" fill="#d97757" />
-</svg>
