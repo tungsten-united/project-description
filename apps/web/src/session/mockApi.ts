@@ -70,10 +70,11 @@ export function createMockApi(stepMs = 2500): MockApi {
           maxAudioMs: 10000,
           maxAudioBytes: 1_000_000,
           maxFrameBytes: 512_000,
-          maxFrameEdgePx: 1280,
+          maxFrameEdgePx: 640,
           maxInputAgeMs: 3000,
           heartbeatMs: 5000,
-          navFrames: 5,
+          navFrames: 4,
+          frameGapMs: 100,
         },
       };
     },

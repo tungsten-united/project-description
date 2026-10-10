@@ -30,6 +30,8 @@ export interface Limits {
   maxInputAgeMs: number;
   heartbeatMs: number;
   navFrames: number;
+  /** Wait after each frame upload before capturing the next; older servers omit it. */
+  frameGapMs?: number;
 }
 
 /** Response of `POST /v1/clients`: one phone from Start to Stop. */
@@ -139,7 +141,8 @@ export interface Capture {
   previewStream(): MediaStream | null;
   startRecording(): void;
   stopRecording(): Promise<Blob | null>;
-  grabFrame(): Promise<Blob | null>;
+  /** A JPEG of the camera, its longest edge at most `maxEdge` (the capture's default when omitted). */
+  grabFrame(maxEdge?: number): Promise<Blob | null>;
   /** What was acquired (camera size and facing, microphone state), for the logs. */
   describe?(): string;
   /** Levels measured while recording, when voice isolation is on. For the logs. */
