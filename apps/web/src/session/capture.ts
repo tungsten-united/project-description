@@ -1,0 +1,111 @@
+import { CaptureError, type Capture } from './types';
+
+const AUDIO_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+
+/** First recorder MIME type the browser supports. Chrome records webm, Safari mp4. */
+export function pickAudioMime(isSupported: (type: string) => boolean): string | undefined {
+  return AUDIO_TYPES.find((t) => isSupported(t));
+}
+
+/** Size that fits the longest edge into `maxEdge`, never enlarging. */
+export function fitWithin(width: number, height: number, maxEdge: number): { width: number; height: number } {
+  const longest = Math.max(width, height);
+  if (longest <= maxEdge) return { width, height };
+  const scale = maxEdge / longest;
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
+}
+
+interface Options {
+  maxEdge?: number;
+  quality?: number;
+}
+
+/** Real microphone and rear camera. Released completely on release(). */
+export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options = {}): Capture {
+  let stream: MediaStream | null = null;
+  let video: HTMLVideoElement | null = null;
+  let recorder: MediaRecorder | null = null;
+  let chunks: Blob[] = [];
+
+  async function open(): Promise<MediaStream> {
+    const md = navigator.mediaDevices;
+    if (!md?.getUserMedia) throw new CaptureError('unavailable', 'Media capture is not available in this browser.');
+    try {
+      return await md.getUserMedia({ audio: true, video: { facingMode: { ideal: 'environment' } } });
+    } catch (e) {
+      const name = (e as DOMException).name;
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        throw new CaptureError('permission_denied', 'Camera or microphone permission was denied.');
+      }
+      throw new CaptureError('unavailable', 'Camera or microphone is not available.');
+    }
+  }
+
+  return {
+    async acquire() {
+      stream = await open();
+      video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
+      await video.play().catch(() => undefined);
+    },
+
+    startRecording() {
+      if (!stream) return;
+      const audioOnly = new MediaStream(stream.getAudioTracks());
+      const mimeType = pickAudioMime((t) => MediaRecorder.isTypeSupported(t));
+      chunks = [];
+      recorder = new MediaRecorder(audioOnly, mimeType ? { mimeType } : undefined);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.start();
+    },
+
+    stopRecording() {
+      const r = recorder;
+      recorder = null;
+      if (!r || r.state === 'inactive') return Promise.resolve(null);
+      return new Promise<Blob | null>((resolve) => {
+        r.onstop = () => {
+          const blob = new Blob(chunks, { type: r.mimeType || 'audio/webm' });
+          chunks = [];
+          resolve(blob.size > 0 ? blob : null);
+        };
+        r.stop();
+      });
+    },
+
+    grabFrame() {
+      if (!video || video.videoWidth === 0) return Promise.resolve(null);
+      const { width, height } = fitWithin(video.videoWidth, video.videoHeight, maxEdge);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d')?.drawImage(video, 0, 0, width, height);
+      return new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', quality));
+    },
+
+    release() {
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+      recorder = null;
+      stream?.getTracks().forEach((t) => t.stop());
+      stream = null;
+      if (video) video.srcObject = null;
+      video = null;
+    },
+  };
+}
+
+/** Stand-in for demo mode and tests: no permissions, a tiny fixed clip and frame. */
+export function createFixtureCapture(): Capture {
+  const blob = (type: string) => new Blob([new Uint8Array([0])], { type });
+  return {
+    async acquire() {},
+    startRecording() {},
+    stopRecording: () => Promise.resolve(blob('audio/webm')),
+    grabFrame: () => Promise.resolve(blob('image/jpeg')),
+    release() {},
+  };
+}

@@ -1,10 +1,10 @@
-import type { OrchestratorApi, ServerEvent, SessionInfo } from './types';
+import type { ClientInfo, OrchestratorApi, ServerEvent } from './types';
 
 const GUIDANCE = [
-  { text: 'Pause and point the camera toward the counter.', action: 'wait', direction: null },
-  { text: 'Turn slightly left, then continue.', action: 'turn', direction: 'left' },
-  { text: 'Continue straight. The counter is ahead.', action: 'continue', direction: null },
-  { text: 'You have arrived at the counter.', action: 'arrived', direction: null },
+  { text: 'Wait a moment.', action: 'wait', direction: null },
+  { text: 'Turn left.', action: 'turn', direction: 'left' },
+  { text: 'Keep going straight.', action: 'continue', direction: null },
+  { text: 'You have arrived at the coffee counter.', action: 'arrived', direction: null },
 ] as const;
 
 type Listener = (event: ServerEvent) => void;
@@ -15,11 +15,15 @@ export function createMockApi(stepMs = 2500): OrchestratorApi {
   let listener: Listener | null = null;
   let timers: ReturnType<typeof setTimeout>[] = [];
   let counter = 0;
+  const clientId = 'mock-client';
+  let sessionId: string | null = null;
 
-  const emit = (partial: { sessionId: string } & Record<string, unknown>) => {
+  const emit = (partial: Record<string, unknown>) => {
     counter += 1;
     listener?.({
       eventId: `mock-${counter}`,
+      clientId,
+      sessionId,
       generation,
       requestId: null,
       emittedAt: Date.now(),
@@ -32,11 +36,12 @@ export function createMockApi(stepMs = 2500): OrchestratorApi {
   };
 
   return {
-    async createSession(): Promise<SessionInfo> {
+    async createClient(): Promise<ClientInfo> {
       generation = 1;
+      sessionId = null;
       return {
-        sessionId: crypto.randomUUID(),
-        sessionToken: 'mock',
+        clientId,
+        clientToken: 'mock',
         generation,
         serverTime: Date.now(),
         phase: 'awaiting_destination',
@@ -55,23 +60,28 @@ export function createMockApi(stepMs = 2500): OrchestratorApi {
           maxFrameEdgePx: 1280,
           maxInputAgeMs: 3000,
           heartbeatMs: 5000,
+          navFrames: 5,
         },
       };
     },
-    subscribe(_session, onEvent) {
+    subscribe(_client, onEvent) {
       listener = onEvent;
       return () => {
         listener = null;
         clear();
       };
     },
-    async sendUtterance(session) {
-      const sessionId = session.sessionId;
+    async sendUtterance() {
+      // A new action starts a new session and bumps the generation, like the real server.
+      generation += 1;
+      sessionId = crypto.randomUUID();
+      timers.push(
+        setTimeout(() => emit({ type: 'state', phase: 'navigating', destinationId: 'counter', routeStepId: 'start' }), 10),
+      );
       GUIDANCE.forEach((g, i) => {
         timers.push(
           setTimeout(() => {
             emit({
-              sessionId,
               type: 'guidance',
               guidanceId: `mock-g-${i}`,
               text: g.text,
@@ -85,9 +95,15 @@ export function createMockApi(stepMs = 2500): OrchestratorApi {
         );
       });
     },
+    async sendFrame() {
+      // Frames are accepted and ignored: the mock is scripted.
+    },
     async stop() {
       generation += 1;
       clear();
+    },
+    speechUrl() {
+      return null;
     },
   };
 }

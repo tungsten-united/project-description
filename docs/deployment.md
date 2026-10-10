@@ -15,7 +15,7 @@ flowchart LR
 
   subgraph gcp["Google Cloud project"]
     run["Cloud Run: orient-orchestrator<br/>Session API, SSE, route + session state"]
-    sm[("Secret Manager<br/>JEV_API_KEY, ELEVENLABS_API_KEY, upstream tokens")]
+    sm[("Secret Manager<br/>TYPESAFE_API_KEY, ELEVENLABS_API_KEY, upstream tokens")]
     ar[("Artifact Registry<br/>container images")]
     log["Cloud Logging<br/>sanitized run trace"]
   end
@@ -59,7 +59,7 @@ All created by [`infra/gcp/setup.sh`](../infra/gcp/setup.sh) except the service 
 | Service account (runtime) | `orient-orchestrator` | Reads secrets, writes logs. Nothing else. |
 | Service account (deploy) | `orient-deployer` | Pushes images and deploys Cloud Run. Used by GitHub Actions only. |
 | Workload Identity Federation | pool `github`, provider `github-oidc` | GitHub Actions authenticates with short-lived tokens, restricted to this repository. No JSON keys stored anywhere. |
-| Secret Manager | `JEV_API_KEY`, `ELEVENLABS_API_KEY`, plus the tunnel credential if the VLA host needs one | Mounted as env vars on the service |
+| Secret Manager | `TYPESAFE_API_KEY`, `ELEVENLABS_API_KEY`, plus the tunnel credential if the VLA host needs one | Mounted as env vars on the service |
 | Budget alert | set in the Billing console | Not scriptable here without billing admin. Pick a cap that fits the EUR 50 pool and confirm it. |
 
 Service settings to decide when the backend exists:
@@ -105,7 +105,7 @@ Frontend, implemented in [`.github/workflows/web.yml`](../.github/workflows/web.
 - The deploy job runs only on a push to `main`, only after the checks pass, in the `production` GitHub environment. Without Cloudflare credentials it skips with a warning instead of failing, so the pipeline can land before the secrets exist.
 - The orchestrator URL is a build-time variable, not a secret.
 
-Backend (next, once `services/orchestrator` has a Dockerfile): authenticate with Workload Identity Federation, build and push to Artifact Registry, deploy to Cloud Run with the runtime service account and secrets mounted. Same trigger: merge to `main` after checks pass. Not written yet because there is nothing to build.
+Backend (next, once `the separate orient-orchestrator repo` has a Dockerfile): authenticate with Workload Identity Federation, build and push to Artifact Registry, deploy to Cloud Run with the runtime service account and secrets mounted. Same trigger: merge to `main` after checks pass. Not written yet because there is nothing to build.
 
 ### GitHub configuration
 

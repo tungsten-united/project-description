@@ -146,13 +146,12 @@ Deployment ([docs/deployment.md](docs/deployment.md)): the web app is static ass
 
 ### Known drift
 
-The web app predates the latest contract. Do not copy its shapes into new code:
+The web app follows the contract as of this change. Still open:
 
-- It still calls `/v1/sessions` and sends a `transcript`. The contract now uses `/v1/clients/{clientId}`, and the phone sends `audio`, which the orchestrator turns into text.
-- It drops every event whose `generation` differs from its own. The contract bumps `generation` on every new session, and the phone must adopt the newer value from the `state` event.
-- Speech goes only through browser TTS. The contract plays ElevenLabs audio from `GET /speech` and keeps browser TTS as the fallback.
-- The orchestrator does not call ElevenLabs yet. `transcribe()` in `src/pipeline.rs` still posts to a generic `STT_URL`, and utterances return 503 without it, so local runs and staging use the fake STT. It has no `GET /speech` endpoint either.
-- `docs/deployment.md` mentions a `services/orchestrator` folder and a `JEV_API_KEY` secret. The orchestrator is the separate repo above, and its Jev key variable is `TYPESAFE_API_KEY`.
+- `session/types.ts` is written by hand, so it can drift again. A shared `packages/contracts` or a cross-repo smoke test would catch it.
+- No `POST /retry` call yet: Try again starts a new client, which is the contract's `destination_prompt` path. `last_confirmed_step` is not used.
+- Staging runs the orchestrator with fakes. Real Jev and ElevenLabs behaviour has not been exercised from the phone.
+- `GET /speech` plays in an `<audio>` element and falls back to browser TTS. Neither has been tried on the demo phone, and iOS audio unlock is untested.
 
 ## Kanban workflow
 
