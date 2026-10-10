@@ -19,7 +19,7 @@ Two levels of state:
 - Base path `/v1`. JSON bodies, UTF-8, camelCase.
 - IDs are UUID v4 strings. The server creates `clientId` and `sessionId`. The phone creates a `requestId` for every POST. A repeated `requestId` returns the original response and is not processed again.
 - `generation`: integer that starts at 1. The server increments it on stop, retry, error and every new session. The phone learns the new value from the event envelope. Every POST and every SSE event carries it. Results from an older generation are dropped on both sides.
-- `sequence`: integer the phone increments on each utterance or frame for the client. The server keeps the highest one and drops anything older (latest frame wins).
+- `sequence`: integer the phone increments on each input or frame for the client. The server keeps the highest one and drops anything older (latest frame wins).
 - `capturedAt`: epoch milliseconds **in server time**. The phone computes `offset = serverTime - Date.now()` from the client response and adds it, because phone and server clocks drift. Input older than `maxInputAgeMs` is rejected.
 - Auth: `POST /v1/clients` returns a `clientToken`. Send it as `Authorization: Bearer <token>`. `EventSource` cannot set headers, so the SSE URL uses `?token=`. The server redacts it from access logs.
 - Route step and destination IDs are fixed strings from the server's route definition, for example `start`, `corridor`, `counter`.
@@ -79,7 +79,7 @@ The phone builds the destination prompt from `destinations[].label` and plays it
 
 Server-sent events. On every connect or reconnect the server first sends a `state` event, so the phone can resync without a replay. See [SSE events](#sse-events).
 
-### `POST /v1/clients/{clientId}/utterances`
+### `POST /v1/clients/{clientId}/inputs`
 
 A spoken command as recorded audio: a destination, or "cancel". The orchestrator runs speech-to-text, then Jev. `multipart/form-data`:
 
@@ -228,7 +228,7 @@ The phone ignores any event whose `generation` is older than its current one, an
 | --- | --- | --- |
 | idle | Start, `POST /clients` 201 | prompting |
 | prompting | Prompt finished speaking | listening |
-| listening | Recording ends, `POST /utterances` 202 | waiting |
+| listening | Recording ends, `POST /inputs` 202 | waiting |
 | waiting | `state` with a new `sessionId` | waiting (adopt the new `generation`, frame loop starts) |
 | waiting | `guidance` or `needs_input` | speaking |
 | waiting | `heartbeat` | waiting |
@@ -293,7 +293,7 @@ The phone always sends audio, and Jev takes text or JSON state, not audio. So th
 
 ### Command: one Choice question
 
-Runs once per utterance. The options are each destination ID plus `cancel` and `unsupported`. The option descriptions are built from the route definition.
+Runs once per input. The options are each destination ID plus `cancel` and `unsupported`. The option descriptions are built from the route definition.
 
 ```json
 {
@@ -380,7 +380,7 @@ One vendor and one key for both directions. `ELEVENLABS_API_KEY` lives only in s
 
 - Only `text` is used. It is trimmed; empty means `needs_input` with `reason: "empty"`.
 - Timeout 5 s. `401`, `422`, `429`, `5xx` or a timeout send an `error` event with stage `stt`, `retryable: true`.
-- This is the batch endpoint, one call per recorded utterance, which matches `POST /utterances`. Scribe v2 Realtime (WebSocket, partial transcripts) exists, but only pays off with always-listening input, which is out of scope.
+- This is the batch endpoint, one call per recorded input, which matches `POST /inputs`. Scribe v2 Realtime (WebSocket, partial transcripts) exists, but only pays off with always-listening input, which is out of scope.
 
 ### Text to speech: Flash v2.5
 
@@ -412,7 +412,7 @@ No media, tokens or prompts.
 ```ts
 {
   at: number, clientId: string, sessionId: string | null, generation: number, requestId: string,
-  kind: "client" | "utterance" | "frame" | "stop" | "retry",
+  kind: "client" | "input" | "frame" | "stop" | "retry",
   clientRouteStepId: string | null, routeStepId: string, destinationId: string | null,
   transcript: string | null, command: string | null,
   engine: string, framesSent: number | null, action: Action | null, confidence: number | null, observation: string | null,

@@ -181,7 +181,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
     }
     r.sequence += 1;
     try {
-      await api.sendUtterance(client, {
+      await api.sendInput(client, {
         requestId: crypto.randomUUID(),
         generation: r.generation,
         sequence: r.sequence,

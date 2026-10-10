@@ -15,7 +15,7 @@ const client: ClientInfo = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('http api', () => {
-  it('posts audio as multipart to /clients/{id}/utterances with the bearer token and server-time capturedAt', async () => {
+  it('posts audio as multipart to /clients/{id}/inputs with the bearer token and server-time capturedAt', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(500); // offset = 1_000_000 - 500
     const fetchMock = vi.fn(async (url: string) =>
       url.endsWith('/clients')
@@ -25,7 +25,7 @@ describe('http api', () => {
     vi.stubGlobal('fetch', fetchMock);
     const api = createHttpApi('https://api.test/');
     await api.createClient();
-    await api.sendUtterance(client, {
+    await api.sendInput(client, {
       requestId: 'r1',
       generation: 1,
       sequence: 1,
@@ -34,7 +34,7 @@ describe('http api', () => {
       frame: null,
     });
     const [url, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
-    expect(url).toBe('https://api.test/v1/clients/c1/utterances');
+    expect(url).toBe('https://api.test/v1/clients/c1/inputs');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok en');
     const form = init.body as FormData;
     expect(JSON.parse(form.get('meta') as string)).toMatchObject({ requestId: 'r1', sequence: 1, capturedAt: 1_000_200 });

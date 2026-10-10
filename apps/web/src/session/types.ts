@@ -59,7 +59,7 @@ export type ServerEvent = Envelope &
     | { type: 'error'; code: string; stage: string; text: string; retryable: boolean }
   );
 
-export interface UtteranceInput {
+export interface UserInput {
   requestId: string;
   generation: number;
   sequence: number;
@@ -82,7 +82,7 @@ export interface FrameInput {
 export interface OrchestratorApi {
   createClient(): Promise<ClientInfo>;
   subscribe(client: ClientInfo, onEvent: (event: ServerEvent) => void): () => void;
-  sendUtterance(client: ClientInfo, input: UtteranceInput): Promise<void>;
+  sendInput(client: ClientInfo, input: UserInput): Promise<void>;
   sendFrame(client: ClientInfo, input: FrameInput): Promise<void>;
   stop(client: ClientInfo, requestId: string, generation: number): Promise<void>;
   /** URL that streams the spoken text as audio, or null when the backend has none (demo mode). */
