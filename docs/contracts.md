@@ -306,7 +306,7 @@ nav-api is stateless. The orchestrator keeps the navigation state in the session
 
 A session's navigation state: the user's node (the last node reached, kept into the next session) with the phone's `stepCount` when they reached it, the route's hops (none while locating), the current hop, and the votes of the last `NAV_VOTE_N` `localize` calls. Each call sends the frames not sent before, so every vote is over different frames. The worker calls once `NAV_BURST` such frames are waiting.
 
-1. **Locating**, at the start of a session and after lost. `localize` without `expected`; after lost, with the last node as `previous` and its step count as `previous_step_count`, so a node the user can't have walked to yet doesn't count. A result votes for its `best` when its status isn't `lost`, its `margin` is at least `NAV_MARGIN`, and that candidate isn't `plausible: false`. The user is at a node once it has `NAV_VOTE_K` of the last `NAV_VOTE_N` votes, or at once on a `confirmed` result. Then `route` from that node to the destination, once. If the node is the destination, the output is `arrived`; with `found: false`, locating goes on. Until the user is located, the output is `wait` with `uncertain: true`.
+1. **Locating**, at the start of a session and after lost. `localize` without `expected`; after lost, with the last node as `previous` and its step count as `previous_step_count`, so a node the user can't have walked to yet doesn't count. A result votes for its `best` when its status isn't `lost`, its `margin` is at least `NAV_MARGIN`, and that candidate isn't `plausible: false`. The user is at a node once it has `NAV_VOTE_K` of the last `NAV_VOTE_N` votes, or at once on a `confirmed` result. Then `route` from that node to the destination, once. If the node is the destination, the output is `arrived`. With `found: false`, the output is `wait` with the instruction "I can't find a way to the {label} from here.", said once (not "Please hold still": the camera is not the problem); locating goes on, and `route` is asked again only once the user is located at another node. Until the user is located, the output is `wait` with `uncertain: true`.
 2. **Following** the hop `source → target`. `localize` with `previous` = source, `expected` = target, each frame's `motion` and `previous_step_count`. Each result is one vote:
    - `at_target`: `best` is the target, `margin` ≥ `NAV_MARGIN`, the status isn't `lost`, and the target isn't `plausible: false`;
    - `elsewhere`: `best` is neither the source nor the target, `margin` ≥ `NAV_MARGIN`, and the status is `confirmed`. An `uncertain` result led by another node is mostly noise: live, those votes caused 15 of 20 restarts (Itnig, 2026-10-10);
@@ -359,14 +359,14 @@ With `motion`:
 The route from the user's node to the destination. Called once each time the user is located, at the start of a session and after lost, unless they are at the destination. The orchestrator keeps the hops and follows them in order.
 
 ```json
-{ "start": "n1", "goal": "n4", "trust": "observed" }
+{ "start": "n1", "goal": "n4", "trust": "any" }
 ```
 
-`trust` is `NAV_TRUST`: `verified` (edges a person checked; nav-api's choice for real users), `observed` (walked while mapping, in the walked direction; the default while no edge is verified) or `any`.
+`trust` is `NAV_TRUST`: `verified` (edges a person checked; nav-api's choice for real users), `observed` (walked while mapping, in the walked direction) or `any` (the default). A published map keeps only connections a walk went along (nav-engine's cleaner), so `any` means walked, either way: the way back along a walked connection, with the instruction the map model wrote for it, which nobody has walked. A place mapped with one walk can then be left the way the user came (Glories Basement, 2026-10-10: located correctly five times on the way back, and 76 of 76 `route` calls found nothing over `observed`).
 
 ```json
 200 {
-  "map_id": "itnig", "start": "n1", "goal": "n4", "trust": "observed", "found": true, "length_m": 9.3,
+  "map_id": "itnig", "start": "n1", "goal": "n4", "trust": "any", "found": true, "length_m": 9.3,
   "hops": [
     { "edge": "e1", "source": "n1", "target": "n2", "forward": true, "length_m": 3.1, "bearing_deg": 12.0,
       "instruction": "Go through the glass door and walk straight ahead about 3 metres. Bear right …",
@@ -380,7 +380,7 @@ Each hop becomes an output when it starts:
 
 - `action` is `turn` with `direction` `left`, `right` or `around` when the hop's first step is `turn_left`, `turn_right` or `turn_around`, and `continue` otherwise.
 - `instruction` is spoken instead of the template. When it is longer than 240 characters, it is cut after the last whole sentence that fits; with no such sentence, the template is used.
-- `found: false`, or a first hop that does not start at the user's node, keeps locating, with the output `wait`.
+- `found: false`, or a first hop that does not start at the user's node, keeps locating, with the output `wait` and the instruction "I can't find a way to the {label} from here." ([Navigation loop](#navigation-loop)).
 - Timeout 2 s.
 
 A `localize` or `route` failure drops that evaluation. Three in a row in a session send an `error` event with stage `navigate`.
