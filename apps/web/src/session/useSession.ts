@@ -51,6 +51,8 @@ export function useSession(
   const viewRef = useRef<ViewState>(initialView);
   const [view, setView] = useState<ViewState>(initialView);
   const [navigating, setNavigating] = useState(false);
+  /** The destinations the orchestrator can guide to, for the on-screen hint. Empty outside a session. */
+  const [places, setPlaces] = useState<string[]>([]);
   const run = useRef<Run>({
     id: 0,
     client: null,
@@ -92,6 +94,7 @@ export function useSession(
       r.unsubscribe?.();
       r.unsubscribe = null;
       setNavigating(false);
+      setPlaces([]);
       send({ type: 'stop', reason, error, detail });
       const client = r.client;
       r.client = null;
@@ -199,6 +202,7 @@ export function useSession(
     }
     logger.setClientId(client.clientId);
     logger.log('info', 'client_created', `generation=${client.generation}`);
+    setPlaces(client.route.destinations.map((d) => d.label));
     r.client = client;
     r.generation = client.generation;
     r.lastEventAt = Date.now();
@@ -322,7 +326,7 @@ export function useSession(
   }, [speech, capture, motion]);
 
   return useMemo(
-    () => ({ view, start, stop: () => halt('user_stop'), finishRecording: () => void finishRecording() }),
-    [view, start, halt, finishRecording],
+    () => ({ view, places, start, stop: () => halt('user_stop'), finishRecording: () => void finishRecording() }),
+    [view, places, start, halt, finishRecording],
   );
 }
