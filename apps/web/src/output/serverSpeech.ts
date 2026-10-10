@@ -9,7 +9,10 @@ const WATCHDOG_MS = 15000;
  * Plays the orchestrator's ElevenLabs audio (`GET /speech`) in one reused <audio> element.
  * Any failure falls back to the browser adapter, so speech never blocks guidance.
  */
-export function createServerSpeech(fallback: SpeechAdapter): SpeechAdapter {
+export function createServerSpeech(
+  fallback: SpeechAdapter,
+  onFallback: (reason: string) => void = () => undefined,
+): SpeechAdapter {
   const audio = typeof Audio !== 'undefined' ? new Audio() : null;
   let urlFor: ((text: string) => string | null) | null = null;
   let current = 0; // id of the utterance that may still resolve
@@ -57,24 +60,25 @@ export function createServerSpeech(fallback: SpeechAdapter): SpeechAdapter {
           audio.onerror = null;
           resolve(result);
         };
-        const useFallback = () => {
+        const switchToFallback = (reason: string) => {
           if (done || id !== current) return;
+          onFallback(reason);
           done = true;
           clearTimeout(watchdog);
           settle = null;
           silence();
           void fallback.speak(text).then(resolve);
         };
-        const watchdog = setTimeout(useFallback, WATCHDOG_MS);
+        const watchdog = setTimeout(() => switchToFallback('timeout'), WATCHDOG_MS);
         settle = (r) => {
           done = true;
           clearTimeout(watchdog);
           resolve(r);
         };
         audio.onended = () => finish('finished');
-        audio.onerror = useFallback;
+        audio.onerror = () => switchToFallback(`audio_error code=${audio.error?.code ?? 'none'}`);
         audio.src = url;
-        audio.play().catch(useFallback);
+        audio.play().catch((e: unknown) => switchToFallback(`play_rejected ${String(e)}`));
       });
     },
 

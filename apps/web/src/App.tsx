@@ -3,6 +3,7 @@ import { createBrowserSpeech } from './output/browserSpeech';
 import { createLiveRegionSpeech } from './output/liveRegionSpeech';
 import { createServerSpeech } from './output/serverSpeech';
 import { createBrowserCapture, createFixtureCapture } from './session/capture';
+import { createDebugLogger, noopLogger } from './session/debugLog';
 import { createHttpApi } from './session/httpApi';
 import { createMockApi } from './session/mockApi';
 import { isRunning, type ViewState } from './session/machine';
@@ -64,10 +65,18 @@ interface AppProps {
 
 export function App({ api, speech, capture }: AppProps) {
   const resolvedApi = useMemo(() => api ?? defaultApi(), [api]);
+  // Debug batches go to the orchestrator, which prints them into Cloud Logging. Off in demo mode.
+  const logger = useMemo(() => {
+    const base = import.meta.env.VITE_API_BASE_URL;
+    return base ? createDebugLogger(base) : noopLogger;
+  }, []);
   // Default: the app's own voice is the only voice. Opt-in: the user's screen reader reads the text.
   const [screenReaderSpeech, setScreenReaderSpeech] = useState(readPreference);
   const [announcement, setAnnouncement] = useState('');
-  const appVoice = useMemo(() => speech ?? createServerSpeech(createBrowserSpeech()), [speech]);
+  const appVoice = useMemo(
+    () => speech ?? createServerSpeech(createBrowserSpeech(), (reason) => logger.log('warn', 'speech_fallback', reason)),
+    [speech, logger],
+  );
   const readerVoice = useMemo(() => createLiveRegionSpeech(setAnnouncement), []);
   const resolvedSpeech = screenReaderSpeech ? readerVoice : appVoice;
   // Demo mode has no backend to receive media, so it skips the permission prompts.
@@ -75,7 +84,7 @@ export function App({ api, speech, capture }: AppProps) {
     () => capture ?? (import.meta.env.VITE_API_BASE_URL ? createBrowserCapture() : createFixtureCapture()),
     [capture],
   );
-  const { view, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture);
+  const { view, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture, logger);
 
   const running = isRunning(view.state);
   const { label, caption } = copyFor(view);

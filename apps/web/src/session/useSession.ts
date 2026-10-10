@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { noopLogger, type DebugLogger } from './debugLog';
 import { initialView, reduce, type MachineEvent, type ViewState } from './machine';
 import {
   CaptureError,
@@ -29,7 +30,17 @@ interface Run {
   lastEventAt: number;
 }
 
-export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture: Capture) {
+function describeEnvironment(): string {
+  const standalone = window.matchMedia?.('(display-mode: standalone)').matches ?? false;
+  return `ua=${navigator.userAgent} secure=${String(window.isSecureContext)} standalone=${String(standalone)} viewport=${window.innerWidth}x${window.innerHeight}`;
+}
+
+export function useSession(
+  api: OrchestratorApi,
+  speech: SpeechAdapter,
+  capture: Capture,
+  logger: DebugLogger = noopLogger,
+) {
   const viewRef = useRef<ViewState>(initialView);
   const [view, setView] = useState<ViewState>(initialView);
   const [navigating, setNavigating] = useState(false);
@@ -54,6 +65,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
   const halt = useCallback(
     (reason: StopReason, error?: string, detail?: string) => {
       const r = run.current;
+      logger.log(reason === 'error' ? 'error' : 'info', 'stop', `${reason}${detail ? `: ${detail}` : ''}`);
       r.id += 1; // invalidates every pending callback from the previous run
       speech.stop();
       speech.setSource?.(null);
@@ -67,8 +79,10 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
       r.sessionId = null;
       if (client) void api.stop(client, crypto.randomUUID(), r.generation).catch(() => undefined);
       if (error) void speech.speak(error);
+      logger.flush();
+      logger.setClientId(null);
     },
-    [api, capture, send, speech],
+    [api, capture, logger, send, speech],
   );
 
   const onEvent = useCallback(
@@ -79,6 +93,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
       if (event.type === 'state') {
         // A newer generation means a new session started. Adopt it, and anything older is a late result.
         if (event.generation < r.generation) return;
+        logger.log('info', 'state', `generation=${event.generation} phase=${event.phase} session=${event.sessionId ?? 'none'}`);
         r.generation = event.generation;
         r.sessionId = event.sessionId;
         r.routeStepId = event.routeStepId;
@@ -88,6 +103,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
       if (event.generation !== r.generation) return; // late result: drop
       switch (event.type) {
         case 'guidance': {
+          logger.log('info', 'guidance', `${event.action} step=${event.routeStepId} uncertain=${String(event.uncertain)}`);
           r.routeStepId = event.routeStepId;
           if (r.spoken.has(event.guidanceId) || viewRef.current.state === 'speaking') return;
           if (viewRef.current.state !== 'waiting') return;
@@ -100,6 +116,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
           return;
         }
         case 'needs_input': {
+          logger.log('info', 'needs_input', event.reason);
           if (viewRef.current.state !== 'waiting') return;
           send({ type: 'speak', text: event.text });
           await speech.speak(event.text);
@@ -116,7 +133,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
           return; // heartbeat only proves the stream is alive
       }
     },
-    [halt, send, speech],
+    [halt, logger, send, speech],
   );
 
   const start = useCallback(async () => {
@@ -131,6 +148,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
     r.routeStepId = null;
     speech.initializeAfterUserGesture();
     send({ type: 'start' });
+    logger.log('info', 'start', describeEnvironment());
     try {
       await capture.acquire(); // inside the tap, so the browser will show its permission prompt
     } catch (e) {
@@ -148,14 +166,16 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
     let client: ClientInfo;
     try {
       client = await api.createClient();
-    } catch {
-      if (id === r.id) halt('error', UNAVAILABLE_TEXT);
+    } catch (e) {
+      if (id === r.id) halt('error', UNAVAILABLE_TEXT, `create_client: ${String(e)}`);
       return;
     }
     if (id !== r.id) {
       void api.stop(client, crypto.randomUUID(), client.generation).catch(() => undefined);
       return;
     }
+    logger.setClientId(client.clientId);
+    logger.log('info', 'client_created', `generation=${client.generation}`);
     r.client = client;
     r.generation = client.generation;
     r.lastEventAt = Date.now();
@@ -166,7 +186,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
     send({ type: 'prompt_started', text: prompt });
     await speech.speak(prompt); // a failed prompt still shows as text, so continue
     if (id === r.id) send({ type: 'prompt_done' });
-  }, [api, capture, halt, onEvent, send, speech]);
+  }, [api, capture, halt, logger, onEvent, send, speech]);
 
   const finishRecording = useCallback(async () => {
     const r = run.current;
@@ -193,8 +213,8 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
         audio,
         frame,
       });
-    } catch {
-      if (id === r.id) halt('error', UNAVAILABLE_TEXT);
+    } catch (e) {
+      if (id === r.id) halt('error', UNAVAILABLE_TEXT, `send_input: ${String(e)}`);
     }
   }, [api, capture, halt, send, speech]);
 
@@ -249,7 +269,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
     const timer = setInterval(() => {
       const r = run.current;
       const limit = (r.client?.limits.heartbeatMs ?? 5000) * 3;
-      if (r.client && Date.now() - r.lastEventAt > limit) halt('error', UNAVAILABLE_TEXT);
+      if (r.client && Date.now() - r.lastEventAt > limit) halt('error', UNAVAILABLE_TEXT, `no event for ${limit} ms`);
     }, 1000);
     return () => clearInterval(timer);
   }, [running, halt]);

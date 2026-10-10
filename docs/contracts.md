@@ -163,6 +163,26 @@ For S08, the debug panel. Uses the same bearer token.
 
 See [Run trace entry](#run-trace-entry).
 
+### `POST /v1/logs`
+
+Debug lines from the phone, for Cloud Logging. No token, because the failures worth seeing (denied permission, no camera, blocked site) happen before `POST /v1/clients`. The orchestrator prints each entry as one structured line with `kind: "client_log"`, next to its own trace, so one query shows both sides of a session. Debug only: no media, tokens or transcripts.
+
+```json
+{
+  "deviceId": "uuid kept in localStorage",
+  "clientId": "6f1c…",
+  "entries": [
+    { "at": 1791561600000, "level": "error", "event": "stop", "detail": "error: NotAllowedError: Permission denied (microphone=denied)" }
+  ]
+}
+```
+
+- `clientId` is null until `POST /v1/clients` has answered. `level` is `info`, `warn` or `error`. `at` is local epoch milliseconds.
+- At most 16 KB and 50 entries per batch. Strings are truncated (`event` 64, `detail` 1000). Over the limit: `413 payload_too_large` or `400 bad_request`.
+- The orchestrator caps the whole server at 120 batches a minute (`429 rate_limited`).
+- `204` on success. The phone ignores every failure, and an orchestrator without this route is fine.
+- The phone sends `Content-Type: text/plain` so the request is "simple" (no CORS preflight), which also lets `sendBeacon` deliver the last batch on page hide. The body is still JSON.
+
 ### HTTP errors
 
 All non-2xx responses use the same body:
