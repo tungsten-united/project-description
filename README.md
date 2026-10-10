@@ -7,7 +7,7 @@ Named after Orient, the guide dog who led Bill Irwin, a blind hiker, along the e
 ## How it works
 
 1. Open the app on a phone and double tap, or press the large Start button.
-2. Orient asks where you want to go. Say a supported destination, such as the coffee counter.
+2. Orient asks where you want to go. Say a supported destination, such as the drinks area, the kitchen or the stage.
 3. The phone sends your voice and camera frames to the server. The server matches each frame against a map of the venue, recorded beforehand ([nav-engine](https://github.com/tungsten-united/nav-engine)), to tell where you are on the route.
 4. Orient speaks one short instruction at a time ("Turn left at the coffee machine.") until you arrive.
 5. Double tap or press Stop at any time to end the session. Stop cancels all pending speech.
