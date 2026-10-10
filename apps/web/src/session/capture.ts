@@ -19,6 +19,24 @@ export function fitWithin(width: number, height: number, maxEdge: number): { wid
 interface Options {
   maxEdge?: number;
   quality?: number;
+  /** How long a granted camera may take to show its first picture. */
+  pictureTimeoutMs?: number;
+}
+
+/** Resolves true once the video has a size (a picture), false after `timeoutMs`. */
+function waitForPicture(video: HTMLVideoElement, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const begun = Date.now();
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const check = () => {
+      const ok = video.videoWidth > 0;
+      if (!ok && Date.now() - begun < timeoutMs) return false;
+      clearInterval(timer);
+      resolve(ok);
+      return true;
+    };
+    if (!check()) timer = setInterval(check, 100);
+  });
 }
 
 /** Best-effort permission states, so a blocked site can be told apart from a dismissed prompt. */
@@ -35,7 +53,7 @@ async function permissionStates(): Promise<string> {
 }
 
 /** Real microphone and rear camera. Released completely on release(). */
-export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options = {}): Capture {
+export function createBrowserCapture({ maxEdge = 1280, quality = 0.7, pictureTimeoutMs = 3000 }: Options = {}): Capture {
   let stream: MediaStream | null = null;
   let video: HTMLVideoElement | null = null;
   let recorder: MediaRecorder | null = null;
@@ -62,24 +80,53 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
     }
   }
 
+  function release() {
+    chain?.dispose();
+    chain = null;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    recorder = null;
+    stream?.getTracks().forEach((t) => t.stop());
+    stream = null;
+    if (video) video.srcObject = null;
+    video = null;
+  }
+
   return {
     async acquire() {
-      stream = await open();
+      const opened = await open();
+      stream = opened;
       if (voiceIsolationEnabled()) {
         try {
-          chain = createVoiceChain(new MediaStream(stream.getAudioTracks()));
+          chain = createVoiceChain(new MediaStream(opened.getAudioTracks()));
         } catch {
           chain = null; // fall back to the raw microphone
         }
       }
-      video = document.createElement('video');
-      video.muted = true;
-      video.playsInline = true;
-      video.srcObject = stream;
-      await video.play().catch(() => undefined);
+      const v = document.createElement('video');
+      video = v;
+      v.muted = true;
+      v.playsInline = true;
+      v.srcObject = opened;
+      await v.play().catch(() => undefined);
+      // Granted is not enough: the session needs a live microphone and a camera that gives a picture.
+      const micLive = opened.getAudioTracks().some((t) => t.readyState === 'live');
+      const picture = await waitForPicture(v, pictureTimeoutMs);
+      if (!micLive || !picture) {
+        const detail = `microphone=${micLive ? 'live' : 'not live'}, camera=${picture ? 'picture' : `no picture after ${pictureTimeoutMs} ms`}`;
+        if (stream === opened) release();
+        else opened.getTracks().forEach((t) => t.stop()); // a newer acquire owns the capture now
+        if (!micLive) throw new CaptureError('unavailable', 'The microphone is not working.', detail);
+        throw new CaptureError('no_picture', 'The camera is not giving a picture.', detail);
+      }
     },
 
     previewStream: () => stream,
+
+    describe() {
+      const settings = stream?.getVideoTracks()[0]?.getSettings?.();
+      const mic = stream?.getAudioTracks()[0];
+      return `camera=${video?.videoWidth ?? 0}x${video?.videoHeight ?? 0} facing=${settings?.facingMode ?? 'unknown'} microphone=${mic?.readyState ?? 'none'}${voiceIsolationEnabled() ? ' isolation=on' : ''}`;
+    },
 
     startRecording() {
       if (!stream) return;
@@ -120,16 +167,7 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
       return new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', quality));
     },
 
-    release() {
-      chain?.dispose();
-      chain = null;
-      if (recorder && recorder.state !== 'inactive') recorder.stop();
-      recorder = null;
-      stream?.getTracks().forEach((t) => t.stop());
-      stream = null;
-      if (video) video.srcObject = null;
-      video = null;
-    },
+    release,
   };
 }
 

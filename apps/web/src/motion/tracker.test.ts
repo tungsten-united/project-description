@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { cameraHeading, StepDetector, STEP } from './tracker';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cameraHeading, createMotionTracker, noMotion, StepDetector, STEP } from './tracker';
 
 /** Bouncing magnitude around gravity at `hz` steps per second, sampled at 50 Hz. */
 function walk(detector: StepDetector, hz: number, seconds: number, amplitude = 2): number {
@@ -46,5 +46,62 @@ describe('camera heading', () => {
 
   it('is unknown when the camera points at the floor', () => {
     expect(cameraHeading(0, 0, 0)).toBeNull();
+  });
+});
+
+/** A devicemotion event with acceleration including gravity, as phones send it. */
+function motionEvent(): Event {
+  return Object.assign(new Event('devicemotion'), { accelerationIncludingGravity: { x: 0, y: 9.81, z: 0 } });
+}
+
+describe('motion start-up', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(window, 'DeviceMotionEvent');
+  });
+
+  function withPermission(answer: 'granted' | 'denied') {
+    vi.stubGlobal('DeviceMotionEvent', Object.assign(function DeviceMotionEvent() {}, { requestPermission: () => Promise.resolve(answer) }));
+  }
+
+  it('listens after a denial, and is ready when samples still arrive (Android Chrome 155)', async () => {
+    withPermission('denied');
+    const tracker = createMotionTracker();
+    expect(await tracker.start()).toBe('denied');
+    window.dispatchEvent(motionEvent());
+    expect((await tracker.ready(500)).motion).toBe(true);
+    expect(tracker.snapshot()).not.toBeNull();
+    tracker.stop();
+  });
+
+  it('is not ready when no sample arrives, even if granted', async () => {
+    vi.useFakeTimers();
+    withPermission('granted');
+    const tracker = createMotionTracker();
+    expect(await tracker.start()).toBe('granted');
+    const ready = tracker.ready(2000);
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(await ready).toEqual({ motion: false, orientation: false });
+    tracker.stop();
+  });
+
+  it('needs new samples after a restart', async () => {
+    vi.useFakeTimers();
+    withPermission('granted');
+    const tracker = createMotionTracker();
+    await tracker.start();
+    window.dispatchEvent(motionEvent());
+    tracker.stop();
+    await tracker.start();
+    const ready = tracker.ready(2000);
+    await vi.advanceTimersByTimeAsync(2100);
+    expect((await ready).motion).toBe(false);
+    tracker.stop();
+  });
+
+  it('reports nothing without sensors', async () => {
+    expect(await noMotion.start()).toBe('unsupported');
+    expect(await noMotion.ready()).toEqual({ motion: false, orientation: false });
   });
 });

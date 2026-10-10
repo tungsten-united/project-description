@@ -45,7 +45,8 @@ export function reduce(view: ViewState, event: MachineEvent): ViewState {
     case 'stop':
       return view.state === 'idle' || view.state === 'stopped'
         ? view
-        : { ...view, state: 'stopped', stopReason: event.reason, error: event.error ?? null, detail: event.detail ?? null };
+        : // The error is spoken, so it is also the last thing said: the fix stays on screen.
+          { ...view, state: 'stopped', spoken: event.error ?? view.spoken, stopReason: event.reason, error: event.error ?? null, detail: event.detail ?? null };
   }
 }
 

@@ -119,7 +119,7 @@ export interface SpeechAdapter {
   stop(): void;
 }
 
-export type CaptureErrorCode = 'permission_denied' | 'unavailable';
+export type CaptureErrorCode = 'permission_denied' | 'unavailable' | 'no_picture';
 
 export class CaptureError extends Error {
   readonly code: CaptureErrorCode;
@@ -140,6 +140,8 @@ export interface Capture {
   startRecording(): void;
   stopRecording(): Promise<Blob | null>;
   grabFrame(): Promise<Blob | null>;
+  /** What was acquired (camera size and facing, microphone state), for the logs. */
+  describe?(): string;
   /** Levels measured while recording, when voice isolation is on. For the logs. */
   voiceStats?(): { noiseFloorDb: number; peakDb: number; openRatio: number; frames: number } | null;
   release(): void;

@@ -26,7 +26,7 @@ function copyFor(view: ViewState, demo: boolean): Copy {
         label: 'Ready',
         caption: demo
           ? 'A scripted walk, no camera or microphone. Press Start, then tap a place.'
-          : 'Orient guides you indoors by voice. Press Start, allow the camera, microphone and motion, then say where you want to go.',
+          : 'Orient guides you indoors by voice. Turn the sound up, press Start, allow the camera, microphone and motion, then say where you want to go.',
       };
     case 'prompting':
       return { label: 'Starting', caption: 'Listen to the question.' };
@@ -88,11 +88,9 @@ export function App({ api, speech, capture, demo = false }: AppProps) {
     const remote = base && !demo ? createDebugLogger(base) : noopLogger;
     return debugStore ? teeLogger(remote, debugStore) : remote;
   }, [debugStore, demo]);
-  // Motion sensors only matter when there is a backend to send them to.
-  const motion = useMemo(
-    () => (import.meta.env.VITE_API_BASE_URL && !demo ? createMotionTracker() : noMotion),
-    [demo],
-  );
+  // Motion sensors only matter when there is a backend to send them to. There, they are required.
+  const live = Boolean(import.meta.env.VITE_API_BASE_URL) && !demo;
+  const motion = useMemo(() => (live ? createMotionTracker() : noMotion), [live]);
   // Default: the app's own voice is the only voice. Opt-in: the user's screen reader reads the text.
   const [screenReaderSpeech, setScreenReaderSpeech] = useState(readPreference);
   const [announcement, setAnnouncement] = useState('');
@@ -110,6 +108,7 @@ export function App({ api, speech, capture, demo = false }: AppProps) {
   const { view, places, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture, {
     logger,
     motion,
+    requireMotion: live,
   });
 
   // Keeps the panel's motion tab live while debugging.
