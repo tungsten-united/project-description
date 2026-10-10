@@ -140,6 +140,8 @@ export interface Capture {
   startRecording(): void;
   stopRecording(): Promise<Blob | null>;
   grabFrame(): Promise<Blob | null>;
+  /** Levels measured while recording, when voice isolation is on. For the logs. */
+  voiceStats?(): { noiseFloorDb: number; peakDb: number; openRatio: number; frames: number } | null;
   release(): void;
 }
 

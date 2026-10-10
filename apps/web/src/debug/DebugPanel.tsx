@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { setVoiceIsolation, voiceIsolationEnabled } from '../audio/voiceIsolation';
 import type { Capture } from '../session/types';
 import type { DebugStore, PayloadRecord } from './store';
 
@@ -76,6 +77,7 @@ export function DebugPanel({ store, capture }: Props) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>('logs');
   const state = useSyncExternalStore(store.subscribe, store.get);
+  const [isolation, setIsolation] = useState(voiceIsolationEnabled);
 
   return (
     <>
@@ -109,6 +111,20 @@ export function DebugPanel({ store, capture }: Props) {
               Frame sending is paused. {state.heldBack} frames were not sent. Voice inputs still go out. Inspect the payloads, then resume.
             </p>
           )}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isolation}
+            onClick={() => {
+              const next = !isolation;
+              setIsolation(next);
+              setVoiceIsolation(next);
+            }}
+            className="flex min-h-11 items-center justify-between gap-3 rounded-xl border-[1.5px] border-line bg-sand px-3 text-left text-sm"
+          >
+            <span>Voice isolation (noise gate, no auto gain). Applies from the next Start.</span>
+            <span className="font-bold">{isolation ? 'On' : 'Off'}</span>
+          </button>
           <div role="tablist" className="flex gap-1">
             {TABS.map((t) => (
               <button

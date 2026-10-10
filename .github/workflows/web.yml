@@ -37,6 +37,7 @@ jobs:
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
           VITE_DEBUG_MODE: ${{ vars.VITE_DEBUG_MODE }}
+          VITE_VOICE_ISOLATION: ${{ vars.VITE_VOICE_ISOLATION }}
       # Prove the Cloudflare config is valid on every PR without needing credentials.
       - run: npx wrangler deploy --dry-run
         working-directory: apps/web
@@ -77,6 +78,7 @@ jobs:
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
           VITE_DEBUG_MODE: ${{ vars.VITE_DEBUG_MODE }}
+          VITE_VOICE_ISOLATION: ${{ vars.VITE_VOICE_ISOLATION }}
       - run: npx wrangler deploy
         if: steps.creds.outputs.ready == 'true'
         working-directory: apps/web
