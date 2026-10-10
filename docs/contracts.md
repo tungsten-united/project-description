@@ -5,7 +5,7 @@ Status: draft for S01 team review. Derived from [architecture.md](architecture.m
 Four boundaries:
 
 1. Phone ↔ Orchestrator: public HTTPS through the tunnel.
-2. Orchestrator ↔ Navigation engine (VLA): internal HTTP on the GPU server, not exposed through the tunnel.
+2. Orchestrator ↔ Navigation engine: internal HTTP, not exposed to the phone. Not implemented by nav-engine yet, see [architecture.md](architecture.md#navigation-engine-nav-engine).
 3. Orchestrator ↔ Jev (TypeSafe): the Command step. Server-side only.
 4. Orchestrator ↔ ElevenLabs: speech to text (Scribe) and text to speech (Flash). Server-side only. See [section 4](#4-orchestrator--elevenlabs).
 
@@ -204,7 +204,7 @@ All non-2xx responses use the same body:
 | 415 | `unsupported_media_type` | Audio or image type not listed |
 | 422 | `expired_input` | `capturedAt` older than `maxInputAgeMs` |
 | 429 | `rate_limited` | Too many requests for this client |
-| 503 | `upstream_unavailable` | VLA, ElevenLabs or Jev unreachable |
+| 503 | `upstream_unavailable` | Navigation engine, ElevenLabs or Jev unreachable |
 
 ## SSE events
 
@@ -260,7 +260,9 @@ The phone ignores any event whose `generation` is older than its current one, an
 | any | Stop tap, `stop` event, `error` event, connection lost | stopped |
 | stopped | Retry, `POST /retry` 200 | prompting (`destination_prompt`) or waiting (`last_confirmed_step`) |
 
-## 2. Orchestrator ↔ Navigation engine (VLA)
+## 2. Orchestrator ↔ Navigation engine
+
+Status: no service implements this endpoint yet. Staging uses the fake in `orient-orchestrator/examples/fakes.rs`. [nav-engine](https://github.com/tungsten-united/nav-engine) has the map and the routing and step-tracking reference code it would be built from; see [architecture.md](architecture.md#navigation-engine-nav-engine).
 
 `POST http://<gpu-host>:<port>/v1/navigate`, internal only. Each call carries the session's last `NAV_FRAMES` (5) frames, oldest first. At the start of a session there are fewer, from 1 up to 5. `multipart/form-data`:
 
