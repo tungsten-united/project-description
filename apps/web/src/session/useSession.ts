@@ -63,6 +63,17 @@ export function useSession(
     lastEventAt: 0,
   });
 
+  /** Speaks one sentence and records when it started and how it ended, for the session timeline. */
+  const say = useCallback(
+    async (text: string) => {
+      logger.local?.('info', 'tts_start', text);
+      const result = await speech.speak(text);
+      logger.local?.('info', 'tts_end', result);
+      return result;
+    },
+    [logger, speech],
+  );
+
   const send = useCallback((event: MachineEvent) => {
     viewRef.current = reduce(viewRef.current, event);
     setView(viewRef.current);
@@ -86,11 +97,11 @@ export function useSession(
       r.client = null;
       r.sessionId = null;
       if (client) void api.stop(client, crypto.randomUUID(), r.generation).catch(() => undefined);
-      if (error) void speech.speak(error);
+      if (error) void say(error);
       logger.flush();
       logger.setClientId(null);
     },
-    [api, capture, logger, motion, send, speech],
+    [api, capture, logger, motion, say, send, speech],
   );
 
   const onEvent = useCallback(
@@ -117,7 +128,7 @@ export function useSession(
           if (viewRef.current.state !== 'waiting') return;
           r.spoken.add(event.guidanceId);
           send({ type: 'speak', text: event.text });
-          await speech.speak(event.text);
+          await say(event.text);
           if (id !== r.id) return;
           if (event.action === 'arrived' || event.action === 'stop') halt(event.action === 'arrived' ? 'arrived' : 'user_stop');
           else send({ type: 'speech_done', then: 'wait' });
@@ -127,7 +138,7 @@ export function useSession(
           logger.log('info', 'needs_input', event.reason);
           if (viewRef.current.state !== 'waiting') return;
           send({ type: 'speak', text: event.text });
-          await speech.speak(event.text);
+          await say(event.text);
           if (id === r.id) send({ type: 'speech_done', then: 'listen' });
           return;
         }
@@ -141,7 +152,7 @@ export function useSession(
           return; // heartbeat only proves the stream is alive; log is for the debug panel
       }
     },
-    [halt, logger, send, speech],
+    [halt, logger, say, send],
   );
 
   const start = useCallback(async () => {
@@ -196,9 +207,9 @@ export function useSession(
     // The open question only. The server's route decides what it can guide to, and says so if it cannot.
     const prompt = 'Where would you like to go?';
     send({ type: 'prompt_started', text: prompt });
-    await speech.speak(prompt); // a failed prompt still shows as text, so continue
+    await say(prompt); // a failed prompt still shows as text, so continue
     if (id === r.id) send({ type: 'prompt_done' });
-  }, [api, capture, halt, logger, motion, onEvent, send, speech]);
+  }, [api, capture, halt, logger, motion, onEvent, say, send, speech]);
 
   const finishRecording = useCallback(async () => {
     const r = run.current;
@@ -209,13 +220,14 @@ export function useSession(
     const capturedAt = Date.now();
     const [audio, frame] = await Promise.all([capture.stopRecording(), capture.grabFrame()]);
     if (id !== r.id) return;
+    logger.local?.('info', 'recording_stopped', audio ? `${(audio.size / 1024).toFixed(0)} KB` : 'no audio');
     const levels = capture.voiceStats?.();
     if (levels) {
       logger.log('info', 'voice_levels', `floor=${levels.noiseFloorDb}dB peak=${levels.peakDb}dB open=${levels.openRatio} frames=${levels.frames}`);
     }
     if (!audio) {
       send({ type: 'speak', text: NOT_HEARD_TEXT });
-      await speech.speak(NOT_HEARD_TEXT);
+      await say(NOT_HEARD_TEXT);
       if (id === r.id) send({ type: 'speech_done', then: 'listen' });
       return;
     }
@@ -234,7 +246,7 @@ export function useSession(
     } catch (e) {
       if (id === r.id) halt('error', UNAVAILABLE_TEXT, `send_input: ${String(e)}`);
     }
-  }, [api, capture, halt, logger, motion, send, speech]);
+  }, [api, capture, halt, logger, motion, say, send]);
 
   // Bounded recording: starts when listening begins and ends by itself.
   const listening = view.state === 'listening';
@@ -242,9 +254,10 @@ export function useSession(
     if (!listening) return;
     capture.startRecording();
     const limit = Math.min(MAX_LISTEN_MS, run.current.client?.limits.maxAudioMs ?? MAX_LISTEN_MS);
+    logger.local?.('info', 'recording_started', `${limit / 1000} s`);
     const timer = setTimeout(() => void finishRecording(), limit);
     return () => clearTimeout(timer);
-  }, [listening, capture, finishRecording]);
+  }, [listening, capture, finishRecording, logger]);
 
   // Frame loop while a session is navigating: one upload in flight, latest frame wins on the server.
   const streaming = navigating && (view.state === 'waiting' || view.state === 'speaking');
@@ -261,6 +274,9 @@ export function useSession(
         if (cancelled || id !== r.id) return;
         if (frame) {
           r.sequence += 1;
+          const m = motion.snapshot();
+          const hdg = m?.headingDeg == null ? 'no heading' : `heading ${Math.round(m.headingDeg)}°`;
+          logger.local?.('info', 'frame_sent', `#${r.sequence} sent, ${(frame.size / 1024).toFixed(0)} KB, ${hdg}`);
           await api
             .sendFrame(client, {
               requestId: crypto.randomUUID(),
@@ -269,7 +285,7 @@ export function useSession(
               capturedAt,
               frame,
               clientRouteStepId: r.routeStepId,
-              motion: motion.snapshot(),
+              motion: m,
             })
             .catch(() => undefined); // 409s resync through events; a dead stream trips the watchdog
         }
@@ -279,7 +295,7 @@ export function useSession(
     return () => {
       cancelled = true;
     };
-  }, [streaming, api, capture, motion]);
+  }, [streaming, api, capture, motion, logger]);
 
   // Connection watchdog: no event for 3 x heartbeatMs means the stream is lost.
   const running = view.state !== 'idle' && view.state !== 'stopped';

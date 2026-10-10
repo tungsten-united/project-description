@@ -1,4 +1,5 @@
 import type { DebugLogger, LogLevel } from '../session/debugLog';
+import { describePhoneEvent, describeServerEntry, type Line, type TimelineLine } from './timeline';
 import type { FrameInput, Motion, OrchestratorApi, UserInput } from '../session/types';
 
 export interface LogLine {
@@ -29,10 +30,17 @@ export interface DebugState {
   paused: boolean;
   /** Frames dropped while paused. */
   heldBack: number;
+  /** The session timeline, oldest first. Cleared on every Start. */
+  timeline: TimelineLine[];
+  /** Local epoch ms of the last Start, or null before the first one. */
+  sessionStart: number | null;
+  /** Whether the orchestrator is streaming its trace (it only does in debug mode). */
+  serverTrace: 'waiting' | 'streaming';
 }
 
 const MAX_LOGS = 200;
 const MAX_PAYLOADS = 8;
+const MAX_TIMELINE = 800;
 
 export interface DebugStore {
   get(): DebugState;
@@ -41,11 +49,25 @@ export interface DebugStore {
   setMotion(motion: Motion | null): void;
   setPaused(paused: boolean): void;
   addPayload(record: Omit<PayloadRecord, 'id' | 'at'>): void;
+  /** A line from this phone. `start` clears the timeline and begins a new session. */
+  addPhoneEvent(level: LogLevel, event: string, detail?: string): void;
+  /** Lines from one trace entry the orchestrator streamed. */
+  addServerEntry(entry: Record<string, unknown>): void;
+  clearTimeline(): void;
   countHeldBack(): void;
 }
 
 export function createDebugStore(): DebugStore {
-  let state: DebugState = { logs: [], payloads: [], motion: null, paused: false, heldBack: 0 };
+  let state: DebugState = {
+    logs: [],
+    payloads: [],
+    motion: null,
+    paused: false,
+    heldBack: 0,
+    timeline: [],
+    sessionStart: null,
+    serverTrace: 'waiting',
+  };
   let nextId = 1;
   const listeners = new Set<() => void>();
   const set = (next: DebugState) => {
@@ -80,6 +102,20 @@ export function createDebugStore(): DebugStore {
     countHeldBack() {
       set({ ...state, heldBack: state.heldBack + 1 });
     },
+    addPhoneEvent(level, event, detail) {
+      const now = Date.now();
+      const base = event === 'start' ? { ...state, timeline: [], sessionStart: now, serverTrace: 'waiting' as const } : state;
+      const line: TimelineLine = { ...describePhoneEvent(level, event, detail), id: nextId++, at: now };
+      set({ ...base, timeline: [...base.timeline, line].slice(-MAX_TIMELINE) });
+    },
+    addServerEntry(entry) {
+      const now = Date.now();
+      const lines: TimelineLine[] = describeServerEntry(entry).map((l: Line) => ({ ...l, id: nextId++, at: now }));
+      set({ ...state, serverTrace: 'streaming', timeline: [...state.timeline, ...lines].slice(-MAX_TIMELINE) });
+    },
+    clearTimeline() {
+      set({ ...state, timeline: [], sessionStart: Date.now() });
+    },
   };
 }
 
@@ -88,7 +124,11 @@ export function teeLogger(remote: DebugLogger, store: DebugStore): DebugLogger {
   return {
     log(level, event, detail) {
       store.log(level, event, detail);
+      store.addPhoneEvent(level, event, detail);
       remote.log(level, event, detail);
+    },
+    local(level, event, detail) {
+      store.addPhoneEvent(level, event, detail);
     },
     setClientId: (id) => remote.setClientId(id),
     flush: () => remote.flush(),
@@ -104,7 +144,10 @@ export function withInspection(api: OrchestratorApi, store: DebugStore): Orchest
     ...api,
     subscribe(client, onEvent) {
       return api.subscribe(client, (event) => {
-        if (event.type === 'log') store.log(event.entry.error ? 'error' : 'info', `server ${event.kind}`, JSON.stringify(event.entry));
+        if (event.type === 'log') {
+          store.log(event.entry.error ? 'error' : 'info', `server ${event.kind}`, JSON.stringify(event.entry));
+          store.addServerEntry(event.entry);
+        }
         onEvent(event);
       });
     },

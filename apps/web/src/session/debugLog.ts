@@ -2,6 +2,8 @@ export type LogLevel = 'info' | 'warn' | 'error';
 
 export interface DebugLogger {
   log(level: LogLevel, event: string, detail?: string): void;
+  /** For the session timeline only: never sent to the orchestrator. Optional. */
+  local?(level: LogLevel, event: string, detail?: string): void;
   setClientId(id: string | null): void;
   flush(): void;
 }
