@@ -18,6 +18,13 @@ body,
   height: 100%;
 }
 
+/* A downward drag at the top must not reload the page: that would end a session. The app never scrolls,
+   and the debug panels scroll inside their own boxes. */
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
 body {
   margin: 0;
   background: var(--color-ivory);
