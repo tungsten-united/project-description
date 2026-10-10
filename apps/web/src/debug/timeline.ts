@@ -107,6 +107,22 @@ export function describePhoneEvent(
 
 type Entry = Record<string, unknown>;
 
+/** Jev's answer from a trace entry: confidence and the two likeliest choices, or where the answer came from. */
+function jevDetail(jev: unknown): string {
+  if (!jev || typeof jev !== 'object') return '';
+  const j = jev as Entry;
+  if (j.error) return ` [jev error: ${clip(j.error, 50)}]`;
+  if (j.source === 'keywords') return ' [keywords, no Jev]';
+  const probs = j.probabilities && typeof j.probabilities === 'object' ? (j.probabilities as Record<string, unknown>) : {};
+  const top = Object.entries(probs)
+    .filter(([, p]) => typeof p === 'number')
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 2)
+    .map(([k, p]) => `${k} ${num(p)}`)
+    .join(', ');
+  return `, conf ${num(j.confidence)}${top ? ` (${top})` : ''}`;
+}
+
 /** Lines for one trace entry the orchestrator streamed (a `log` event). */
 export function describeServerEntry(entry: Entry): Line[] {
   const out: Line[] = [];
@@ -137,7 +153,11 @@ export function describeServerEntry(entry: Entry): Line[] {
     const command = entry.command ? String(entry.command) : null;
     if (command && command !== 'empty' && !dropped) {
       const dest = entry.destinationId ? ` → ${entry.destinationId}` : '';
-      out.push({ src: 'JEV', level: 'info', text: `command: ${command}${dest}${t.command ? ` (${ms(t.command)})` : ''}` });
+      out.push({
+        src: 'JEV',
+        level: 'info',
+        text: `command: ${command}${dest}${jevDetail(entry.jev)}${t.command ? ` (${ms(t.command)})` : ''}`,
+      });
     }
     if (command === 'start') {
       out.push({ src: 'ORCH', level: 'info', text: `session ${short(entry.sessionId)} → destination ${entry.destinationId ?? '?'}` });
@@ -180,7 +200,13 @@ export function describeServerEntry(entry: Entry): Line[] {
     }
     if (t.jev !== undefined || entry.quietReason === 'not_worth_saying') {
       const no = entry.quietReason === 'not_worth_saying';
-      out.push({ src: 'JEV', level: 'info', text: `worth saying? ${no ? 'no' : 'yes'}${ms(t.jev) ? ` (${ms(t.jev)})` : ''}` });
+      const j = entry.jev as Entry | null | undefined;
+      const answer = j && typeof j.choice === 'string' ? `, says ${j.choice}${jevDetail(j)}` : jevDetail(j);
+      out.push({
+        src: 'JEV',
+        level: 'info',
+        text: `worth saying? ${no ? 'no' : 'yes'}${answer}${ms(t.jev) ? ` (${ms(t.jev)})` : ''}`,
+      });
     }
     if (dropped) {
       out.push({ src: 'ORCH', level: 'warn', text: `frame ${rid} dropped: ${dropped}` });

@@ -37,6 +37,37 @@ describe('orchestrator trace entries', () => {
     expect(lines[1].text).toBe('command: start → n8 (209 ms)');
   });
 
+  it('adds Jev confidence and the two likeliest choices to the command line', () => {
+    const lines = describeServerEntry({
+      kind: 'input',
+      transcript: 'go to the stage',
+      command: 'start',
+      destinationId: 'n8',
+      timingsMs: { stt: 500, command: 200 },
+      jev: { source: 'jev', choice: 'n8', confidence: 0.86, probabilities: { n8: 0.9, unsupported: 0.08, cancel: 0.02 } },
+    });
+    expect(lines.find((l) => l.src === 'JEV')!.text).toBe('command: start → n8, conf 0.86 (n8 0.90, unsupported 0.08) (200 ms)');
+  });
+
+  it('marks the keyword fallback and a failed Jev call', () => {
+    const base = { kind: 'input', transcript: 'kitchen', command: 'start', destinationId: 'n7' };
+    expect(describeServerEntry({ ...base, jev: { source: 'keywords' } }).find((l) => l.src === 'JEV')!.text).toContain('[keywords, no Jev]');
+    expect(describeServerEntry({ ...base, jev: { source: 'jev', error: 'timeout' } }).find((l) => l.src === 'JEV')!.text).toContain('[jev error: timeout]');
+  });
+
+  it('shows the worth-saying answer with its confidence', () => {
+    const lines = describeServerEntry({
+      kind: 'frame',
+      spoke: false,
+      quietReason: 'not_worth_saying',
+      action: 'continue',
+      routeStepId: 'n2',
+      timingsMs: { jev: 210, total: 400 },
+      jev: { source: 'jev', choice: 'quiet', confidence: 0.81, probabilities: { quiet: 0.81, speak: 0.19 } },
+    });
+    expect(lines.find((l) => l.src === 'JEV')!.text).toBe('worth saying? no, says quiet, conf 0.81 (quiet 0.81, speak 0.19) (210 ms)');
+  });
+
   it('shows the GPU embed time and the localization verdict for a frame', () => {
     const lines = describeServerEntry({
       kind: 'frame',

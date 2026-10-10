@@ -512,9 +512,11 @@ No media, tokens or prompts.
   engine: string, framesSent: number | null, action: Action | null, confidence: number | null, observation: string | null,
   spoke: boolean, text: string | null,
   timingsMs: { upload?: number, stt?: number, command?: number, localize?: number, route?: number, jev?: number, tts?: number, total: number },
-  dropped: "stale_generation" | "stale_sequence" | "expired_input" | "superseded" | null,
+  dropped: "stale_generation" | "stale_sequence" | "expired_input" | "superseded" | "echo" | null,
   error: string | null,
   localize: object | null, route: object | null, // nav-api's raw localize and route responses, frame entries only
-  quietReason: string | null // why a frame's output was kept quiet: "unchanged", "not_worth_saying", …
+  quietReason: string | null, // why a frame's output was kept quiet: "unchanged", "not_worth_saying", …
+  // Jev's answer behind the decision: the command question on input entries, "worth saying" on frame entries
+  jev: { source: "jev" | "keywords", choice?: string, confidence?: number, probabilities?: object, error?: string } | null
 }
 ```
