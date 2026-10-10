@@ -107,7 +107,7 @@ Suggested four-person split; choose actual names together:
 
 ## Codebase
 
-This repository holds the plan, the docs and the phone web app. The orchestrator backend is a separate Rust repo, [tungsten-united/orient-orchestrator](https://github.com/tungsten-united/orient-orchestrator). The navigation engine is [tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine): the recorder, map pipeline and review (`map-api`, with a debugging frontend for the team), and `nav-api`, the live API the orchestrator calls for every frame (`localize`, then `route`; [contracts.md section 2](docs/contracts.md#2-orchestrator--navigation-engine)). The phone never calls nav-engine.
+This repository holds the plan, the docs and the phone web app. The orchestrator backend is a separate Rust repo, [tungsten-united/orient-orchestrator](https://github.com/tungsten-united/orient-orchestrator). The navigation engine is [tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine): the map pipeline and review (`map-api`, with a debugging frontend for the team; walks are recorded on this app's `/map` page, [contracts.md section 5](docs/contracts.md#5-mapping-page--map-api)), and `nav-api`, the live API the orchestrator calls for every frame (`localize`, then `route`; [contracts.md section 2](docs/contracts.md#2-orchestrator--navigation-engine)). During guidance the phone never calls nav-engine.
 
 ### Commands
 

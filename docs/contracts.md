@@ -2,12 +2,13 @@
 
 Status: draft for S01 team review. Derived from [architecture.md](architecture.md). Every limit and timeout below is a starting value that we tune on the demo phone, not a measured result.
 
-Four boundaries:
+Five boundaries:
 
 1. Phone ↔ Orchestrator: public HTTPS through the tunnel.
 2. Orchestrator ↔ Navigation engine: nav-engine's nav-api, server to server over HTTPS with nav-api's token. Never exposed to the phone. See [section 2](#2-orchestrator--navigation-engine) and [architecture.md](architecture.md#navigation-engine-nav-engine).
 3. Orchestrator ↔ Jev (TypeSafe): the Command step. Server-side only.
 4. Orchestrator ↔ ElevenLabs: speech to text (Scribe) and text to speech (Flash). Server-side only. See [section 4](#4-orchestrator--elevenlabs).
+5. Mapping page ↔ map-api: the web app's `/map` page, for the team, records walks of a venue straight into nav-engine's map-api. Not part of guidance. See [section 5](#5-mapping-page--map-api).
 
 Two levels of state:
 
@@ -187,7 +188,7 @@ Debug lines from the phone, for Cloud Logging. No token, because the failures wo
 
 ### Motion (proposed, pending team review)
 
-An optional `motion` field in the `meta` JSON of `POST /inputs` and `POST /frames`, so the navigation engine knows how the phone is moving. `null` when the sensors are denied or unsupported. The phone estimates it with the same step detector and camera-heading formula as the nav-engine recorder (`frontend/app.js`, `STEP` constants and `cameraHeading`).
+An optional `motion` field in the `meta` JSON of `POST /inputs` and `POST /frames`, so the navigation engine knows how the phone is moving. `null` when the sensors are denied or unsupported. The phone estimates it with the same step detector and camera-heading formula as the `/map` recorder (`apps/web/src/motion/tracker.ts`, `STEP` constants and `cameraHeading`), so live and recorded walks agree.
 
 ```ts
 interface Motion {
@@ -538,3 +539,12 @@ No media, tokens or prompts.
   jev: { source: "jev" | "keywords", choice?: string, confidence?: number, probabilities?: object, error?: string } | null
 }
 ```
+
+## 5. Mapping page ↔ map-api
+
+The web app's `/map` page (`apps/web/src/mapping/`) records free walks of a venue for its map: rear-camera video, motion and compass samples, push-to-talk voice notes and tags. It is for the people who map a venue, linked by a small "Map a place" link on the main screen, and it is the only part of the app that calls nav-engine. Guidance still goes only through the orchestrator.
+
+- Service: nav-engine's **map-api**, `https://map-api-613464313064.europe-southwest1.run.app/api/v1` (`VITE_MAP_API_URL` overrides the base). OpenAPI at `/docs` there. Format: `nav/schemas/recording.py` in nav-engine (schema_version 1), the same as the recorder that used to live in nav-engine's debugging frontend.
+- Auth: map-api's token as `Authorization: Bearer`. The site is public, so the token is never built in: the page asks for it once ("Access code") and keeps it in `localStorage` (`orient.mapToken`); opening `/map?token=…` sets it too and removes it from the address bar. A 401 asks again.
+- CORS: map-api's `NAV_CORS_ORIGINS` includes `https://orient.harshdeepsingh.dev`; localhost is allowed for development.
+- Calls: `GET /places` and `GET /recordings` (setup screen); `POST /recordings` (start, returns `rec_id`); while walking `PUT /recordings/{id}/video/{seq}` (2 s chunks), `POST /recordings/{id}/samples` (1 s batches of IMU, orientation and events) and `PUT /recordings/{id}/voice/{clip}?t_start_ms&t_end_ms`; at stop `POST /recordings/{id}/finish`, then `GET /recordings/{id}` until it is `complete`, `incomplete` or `failed`. Uploads are idempotent, sent one at a time and retried with backoff. A finished walk rebuilds its place's map on map-api.

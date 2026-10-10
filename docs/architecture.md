@@ -66,7 +66,7 @@ flowchart LR
   orch -.-> trace
 ```
 
-Legend: `stt` and `ttsapi` (ElevenLabs), `cmd` (Jev, TypeSafe API) and `nav` (nav-engine's nav-api, whose models run on a GPU host) are the model calls. The phone never calls nav-engine. The worker, its comparison rule and the sentence templates are plain code inside the Orchestrator.
+Legend: `stt` and `ttsapi` (ElevenLabs), `cmd` (Jev, TypeSafe API) and `nav` (nav-engine's nav-api, whose models run on a GPU host) are the model calls. During guidance the phone never calls nav-engine. The worker, its comparison rule and the sentence templates are plain code inside the Orchestrator.
 
 ## 3. One pass through the pipeline
 
@@ -153,14 +153,14 @@ sequenceDiagram
 
 ## Navigation engine (nav-engine)
 
-[tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine) is map-based, not a VLA. The Orchestrator uses it: for every frame it evaluates, the worker calls nav-engine's **nav-api**, `localize` then `route` ([contracts.md section 2](contracts.md#2-orchestrator--navigation-engine)). The phone never calls nav-engine. As of 2026-10-10 it has:
+[tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine) is map-based, not a VLA. The Orchestrator uses it: for every frame it evaluates, the worker calls nav-engine's **nav-api**, `localize` then `route` ([contracts.md section 2](contracts.md#2-orchestrator--navigation-engine)). During guidance the phone never calls nav-engine. As of 2026-10-10 it has:
 
-- **Recorder:** a phone page and API (`map-api` on Cloud Run), part of nav-engine's debugging frontend for the team, that records free walks of a place: video, motion sensors, compass, voice notes and tags. Recordings go to `gs://tungsten-united-nav-recordings/recordings/`.
+- **Recorder:** the web app's `/map` page, for the team, and nav-engine's API (`map-api` on Cloud Run). It records free walks of a place: video, motion sensors, compass, voice notes and tags. Recordings go to `gs://tungsten-united-nav-recordings/recordings/`. It is the only page of the app that calls nav-engine, and only for mapping ([contracts.md section 5](contracts.md#5-mapping-page--map-api)).
 - **Map pipeline:** every walk of a place feeds one semantic topological map. Sharpest frames at 1 fps, steps and heading from the IMU, walked distance from the floor seen in the video, Whisper for voice notes, DINOv2 and MegaLoc embeddings, ALIKED + LightGlue for same-place checks, then a Claude Code job writes nodes and edges with spoken instructions both ways. Code assigns stable ids, distances, headings and reference images (with MegaLoc embeddings, for visual place recognition). A TypeSafe Jev check flags instructions that rely on sight. Models run on a teammate GPU (helium, `nav-infer`) behind a tunnel.
 - **Review:** a person verifies, fixes or hides nodes and edges, in the viewer or with `nav map review`, and enters distances measured on site, which set the map's scale. nav-api routes over verified edges unless asked otherwise; the Orchestrator asks for `observed` edges (`NAV_TRUST`) until the demo route is verified.
 - **nav-api, for the Orchestrator:** https://nav-api-613464313064.europe-southwest1.run.app, on Cloud Run, read-only on the published maps, with its own bearer token. `POST /maps/{map}/localize` takes 1 to 4 JPEG frames and the last confirmed node, embeds them with MegaLoc on the GPU host, and compares them with the map's reference images: ranked nodes and `confirmed`, `uncertain` or `lost`. `POST /maps/{map}/route` gives the shortest route over trusted edges (Dijkstra), each hop with its steps and spoken instruction. It is stateless: the Orchestrator keeps the last confirmed node and confirms arrival. About 27 ms per frame on the GPU plus the network; the first frame after the GPU host restarts can get a 503. The thresholds are placeholders until tuned on venue images.
 - **Reference code, not served:** `pdr.GraphTracker` (step detection and progress towards the next node, with uncertainty). It predicts arrival but needs a visual or user confirmation to advance.
-- **Debugging frontend**, served by `map-api` for the team: the recorder, a recordings dashboard, a map viewer, and `/loc/` and `/nav/` pages that test nav-api by hand. Not part of Orient.
+- **Debugging frontend**, served by `map-api` for the team: an index that links to `/map`, a recordings dashboard, a map viewer, and `/loc/` and `/nav/` pages that test nav-api by hand. Not part of Orient.
 - **Map of Itnig:** one walk, 10 nodes (`n1` Main entrance, `n2` Drinks area, `n3` Hackathon tables, `n4` Stage corridor, `n5` Right-side tables, `n6` Corridor end, `n7` Kitchen, `n8` Stage, `n9` Stone wall tables, `n10` Centre tables), 9 edges, all `observed` one way and `inferred` back. None is verified yet.
 
 What it does not have yet: localization tested on a walk the map was not built from, orientation and turn checks, and verified edges. Gaps are open points 9 to 11.

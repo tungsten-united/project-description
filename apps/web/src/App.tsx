@@ -145,13 +145,25 @@ export function App({ api, speech, capture, demo = false }: AppProps) {
       {debugStore && <DebugPanel store={debugStore} capture={resolvedCapture} />}
       {debugStore && <SessionLogPanel store={debugStore} />}
 
-      <header className="flex items-center justify-between pr-28 text-base text-ink-soft">
-        <span className="flex items-center gap-2.5">
+      {/* The right padding keeps clear of the debug buttons, which only exist in debug mode. On a narrow screen the
+          labels wrap under the name rather than over it. */}
+      <header className={`flex flex-wrap items-center gap-x-3 text-base text-ink-soft ${debugStore ? 'pr-28' : ''}`}>
+        <span className="flex shrink-0 items-center gap-2.5">
           {/* Decorative: the name next to it carries the meaning. CSS uppercases it, so a screen reader says "Orient". */}
           <img src="/icons/icon-192.png" alt="" width={32} height={32} className="size-8 rounded-lg" />
           <span className="text-lg font-bold tracking-[0.18em] text-slate uppercase">Orient</span>
         </span>
-        {demo ? <span>Scripted demo</span> : !import.meta.env.VITE_API_BASE_URL && <span>Demo mode</span>}
+        <span className="ml-auto flex items-center gap-x-3 whitespace-nowrap">
+          {demo ? <span>Scripted demo</span> : !import.meta.env.VITE_API_BASE_URL && <span>Demo mode</span>}
+          {/* For the people who record a venue's map. Small and out of the way of Start. */}
+          <a
+            href="/map"
+            onDoubleClick={(e) => e.stopPropagation()}
+            className="flex min-h-11 items-center underline underline-offset-4"
+          >
+            Map a place
+          </a>
+        </span>
       </header>
 
       <div role="status" className="sr-only">
