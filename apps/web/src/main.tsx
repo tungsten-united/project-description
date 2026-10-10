@@ -12,3 +12,13 @@ createRoot(document.getElementById('root')!).render(
     )}
   </StrictMode>,
 );
+
+// Optional install support: the worker caches nothing (see public/sw.js). A failure here
+// must never affect the app, so registration is production-only and fully swallowed.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  try {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  } catch {
+    // ignore: installability is optional
+  }
+}
