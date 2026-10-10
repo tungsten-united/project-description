@@ -1,7 +1,7 @@
 # Architecture: Voice Guidance pipeline
 
 Status: draft for team review. Diagrams are Mermaid, so they render on GitHub and diff cleanly.
-Everything here is a proposal. Models and hosting are not decided. Speech in and out is ElevenLabs: Scribe v2 for speech to text, Flash v2.5 for text to speech, both called by the Orchestrator ([contracts.md section 4](contracts.md#4-orchestrator--elevenlabs)). Decisions go through [Jev](https://docs.typesafe.ai/introduction), TypeSafe's decision model: the Command step is one Jev Choice question. Jev does not generate text, so sentences are templates and the worker's speak-or-stay-quiet rule is code. HTTP contracts: [contracts.md](contracts.md).
+Everything here is a proposal. Models and hosting are not decided. Speech in and out is ElevenLabs: Scribe v2 for speech to text, Flash v2.5 for text to speech, both called by the Orchestrator ([contracts.md section 4](contracts.md#4-orchestrator--elevenlabs)). Navigation is nav-engine's **nav-api**, which the Orchestrator calls ([contracts.md section 2](contracts.md#2-orchestrator--navigation-engine), [below](#navigation-engine-nav-engine)). Decisions go through [Jev](https://docs.typesafe.ai/introduction), TypeSafe's decision model: the Command step and the worker's speak-or-quiet question are each one Jev Choice question. Jev does not generate text, so sentences are the route's instructions from nav-api, or templates. HTTP contracts: [contracts.md](contracts.md).
 
 ## 1. Context
 
@@ -32,15 +32,16 @@ flowchart LR
     tts["Audio playback<br/>one audio element, queue, interruption<br/>browser TTS fallback"]
   end
 
-  subgraph backend["Inference backend: GPU server behind HTTPS"]
+  subgraph backend["Backend: the Orchestrator and the services it calls"]
     orch["Orchestrator<br/>auth, limits, client and session state<br/>new session on a new action, stale drop"]
     stt["Speech to text<br/>ElevenLabs Scribe v2"]
     ttsapi["Text to speech<br/>ElevenLabs Flash v2.5, cached by text"]
-    cmd["Command classifier<br/>Jev Choice: destination, cancel or unsupported"]
-    buf[("Session frame buffer<br/>last 5 frames")]
-    wrk["Worker<br/>runs nav, compares with previous output,<br/>speaks only on change"]
-    nav["Navigation engine<br/>last 5 frames + destination + route step to action<br/>(not served yet, see open point 8)"]
-    route[("Route definition<br/>steps, landmarks, transitions")]
+    cmd["Jev (TypeSafe)<br/>Choice: destination, cancel or unsupported;<br/>Choice: speak or quiet"]
+    buf[("Session frame buffer<br/>last 4 frames")]
+    wrk["Worker<br/>localize, then route; compares with previous output,<br/>Jev decides whether a change is spoken"]
+    nav["Navigation engine: nav-engine's nav-api<br/>localize: frames to the user's node<br/>route: next hop and its instruction"]
+    navmap[("Venue map<br/>published by nav-engine, reviewed")]
+    route[("Route definition<br/>destinations: map node ids, labels, aliases")]
     trace[("Run trace<br/>IDs, timings, errors, no raw media")]
   end
 
@@ -58,13 +59,14 @@ flowchart LR
   orch --> wrk
   wrk -.->|"reads"| buf
   wrk <--> nav
+  wrk <-->|"speak or quiet"| cmd
   wrk -->|"guidance or heartbeat"| orch
   orch --> route
-  nav -.->|"reads"| route
+  nav -.->|"reads"| navmap
   orch -.-> trace
 ```
 
-Legend: `stt` and `ttsapi` (ElevenLabs), `cmd` (Jev, TypeSafe API) and `nav` (navigation engine) are the model calls. The worker, its comparison rule and the sentence templates are plain code inside the Orchestrator.
+Legend: `stt` and `ttsapi` (ElevenLabs), `cmd` (Jev, TypeSafe API) and `nav` (nav-engine's nav-api, whose models run on a GPU host) are the model calls. The phone never calls nav-engine. The worker, its comparison rule and the sentence templates are plain code inside the Orchestrator.
 
 ## 3. One pass through the pipeline
 
@@ -75,9 +77,9 @@ sequenceDiagram
   participant P as Phone app
   participant O as Orchestrator
   participant S as Speech to text (Scribe)
-  participant C as Command classifier (Jev)
+  participant C as Jev (TypeSafe)
   participant K as Worker
-  participant N as Navigation engine
+  participant N as nav-api (nav-engine)
 
   U->>P: speaks (voice) + camera frame
   P->>O: POST audio + frame (client, generation, sequence, capturedAt)
@@ -101,13 +103,18 @@ sequenceDiagram
     end
     loop each fresh frame while navigating
       P->>O: POST frame
-      Note over O: add to the session buffer (keep last 5)
+      Note over O: add to the session buffer (keep last 4)
       O->>K: evaluate newest frame
-      K->>N: last 5 frames + destinationId + route step
-      N-->>K: action + proposed next step + confidence
-      Note over K: validate against route definition into an output,<br/>drop if the generation changed meanwhile
+      K->>N: localize: last 4 frames + last confirmed node
+      N-->>K: confirmed, uncertain or lost + best node
+      K->>N: route: user's node to destinationId
+      N-->>K: hops (first hop: target, steps, instruction)
+      Note over K: first hop into an output,<br/>drop if the generation changed meanwhile
       alt output differs from the previous output
-        K-->>O: template sentence
+        K->>C: worth saying? (Choice: speak or quiet)
+        C-->>K: choice + confidence
+        Note over K: a confident quiet sends a heartbeat instead
+        K-->>O: hop instruction or template sentence
         O-->>P: SSE guidance event (text, action, route)
         P->>O: GET speech (text)
         Note over O: ElevenLabs Flash stream, or cache hit
@@ -134,34 +141,37 @@ sequenceDiagram
 | Orchestrator | Auth, size limits, client, session and generation tracking, starting a new session on a new action, route validation, SSE out | Model internals |
 | Speech to text (ElevenLabs Scribe v2) | Audio to transcript | Meaning of the request |
 | Text to speech (ElevenLabs Flash v2.5) | Text to MP3 stream, proxied and cached by the Orchestrator | Wording, timing |
-| Command classifier (Jev) | Turning a transcript into `start(destinationId)`, `cancel` or `unsupported`, with a confidence | Route progress |
-| Worker | Calling the navigation engine with the last 5 frames, comparing each output with the session's previous output, choosing guidance or heartbeat | Model internals, route definition |
-| Navigation engine | Last 5 frames + destination + step to a structured action | Wording, deciding whether to speak |
-| Sentence templates | One sentence of at most 240 characters per action | Route validity |
-| Route definition | Allowed steps and transitions, server-owned | Anything learned at runtime |
+| Jev (TypeSafe) | Turning a transcript into `start(destinationId)`, `cancel` or `unsupported`, and judging whether a changed direction is worth saying, each with a confidence | Route progress, wording |
+| Worker | Calling nav-api (`localize` with the last 4 frames, then `route`), keeping the user's last confirmed node, comparing each output with the session's previous output, choosing guidance or heartbeat | Model internals, the map |
+| Navigation engine (nav-engine's nav-api) | Which node of the venue map the frames show (`confirmed`, `uncertain` or `lost`), and the route to the destination with each hop's spoken instruction | The user's position between calls (it is stateless), deciding whether to speak |
+| Sentence templates | A fallback sentence per action, when the route hop has no instruction that fits 240 characters | Route validity |
+| Route definition | The supported destinations: map node ids, labels and aliases, server-owned | Paths, which come from nav-api |
 | Run trace | Sanitized IDs, stage timings and errors | Raw audio or images |
 
 ## Navigation engine (nav-engine)
 
-[tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine) is map-based, not a VLA. As of 2026-10-10 it has:
+[tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine) is map-based, not a VLA. The Orchestrator uses it: for every frame it evaluates, the worker calls nav-engine's **nav-api**, `localize` then `route` ([contracts.md section 2](contracts.md#2-orchestrator--navigation-engine)). The phone never calls nav-engine. As of 2026-10-10 it has:
 
-- **Recorder:** a phone web app and API (`nav-api` on Cloud Run) that records free walks of a place: video, motion sensors, compass, voice notes and tags. Recordings go to `gs://tungsten-united-nav-recordings/recordings/`.
-- **Map pipeline:** every walk of a place feeds one semantic topological map. Sharpest frames at 1 fps, steps and heading from the IMU, Whisper for voice notes, DINOv2 and MegaLoc embeddings, ALIKED + LightGlue for same-place checks, then a Claude Code job writes nodes and edges with spoken instructions both ways. Code assigns stable ids, distances, headings and reference images (with MegaLoc embeddings, for visual place recognition). A TypeSafe Jev check flags instructions that rely on sight. Models run on a teammate GPU (helium, `nav-infer`) behind a tunnel.
-- **Review:** a person verifies, fixes or hides nodes and edges, in the viewer or with `nav map review`. Real users are routed over verified edges only.
-- **Live-navigation reference code** (Python, meant to port to TypeScript): `route.plan_route` (Dijkstra over trusted edges) and `pdr.GraphTracker` (step detection and progress towards the next node, with uncertainty). It predicts arrival but needs a visual or user confirmation to advance.
-- **Map of Itnig:** one walk, 10 nodes (Main entrance, Drinks area, Hackathon tables, Stage corridor, Right-side tables, Corridor end, Kitchen, Stage, Stone wall tables, Centre tables), 9 edges, all `observed` one way and `inferred` back. None is verified yet.
+- **Recorder:** a phone page and API (`map-api` on Cloud Run), part of nav-engine's debugging frontend for the team, that records free walks of a place: video, motion sensors, compass, voice notes and tags. Recordings go to `gs://tungsten-united-nav-recordings/recordings/`.
+- **Map pipeline:** every walk of a place feeds one semantic topological map. Sharpest frames at 1 fps, steps and heading from the IMU, walked distance from the floor seen in the video, Whisper for voice notes, DINOv2 and MegaLoc embeddings, ALIKED + LightGlue for same-place checks, then a Claude Code job writes nodes and edges with spoken instructions both ways. Code assigns stable ids, distances, headings and reference images (with MegaLoc embeddings, for visual place recognition). A TypeSafe Jev check flags instructions that rely on sight. Models run on a teammate GPU (helium, `nav-infer`) behind a tunnel.
+- **Review:** a person verifies, fixes or hides nodes and edges, in the viewer or with `nav map review`, and enters distances measured on site, which set the map's scale. nav-api routes over verified edges unless asked otherwise; the Orchestrator asks for `observed` edges (`NAV_TRUST`) until the demo route is verified.
+- **nav-api, for the Orchestrator:** https://nav-api-613464313064.europe-southwest1.run.app, on Cloud Run, read-only on the published maps, with its own bearer token. `POST /maps/{map}/localize` takes 1 to 4 JPEG frames and the last confirmed node, embeds them with MegaLoc on the GPU host, and compares them with the map's reference images: ranked nodes and `confirmed`, `uncertain` or `lost`. `POST /maps/{map}/route` gives the shortest route over trusted edges (Dijkstra), each hop with its steps and spoken instruction. It is stateless: the Orchestrator keeps the last confirmed node and confirms arrival. About 27 ms per frame on the GPU plus the network; the first frame after the GPU host restarts can get a 503. The thresholds are placeholders until tuned on venue images.
+- **Reference code, not served:** `pdr.GraphTracker` (step detection and progress towards the next node, with uncertainty). It predicts arrival but needs a visual or user confirmation to advance.
+- **Debugging frontend**, served by `map-api` for the team: the recorder, a recordings dashboard, a map viewer, and `/loc/` and `/nav/` pages that test nav-api by hand. Not part of Orient.
+- **Map of Itnig:** one walk, 10 nodes (`n1` Main entrance, `n2` Drinks area, `n3` Hackathon tables, `n4` Stage corridor, `n5` Right-side tables, `n6` Corridor end, `n7` Kitchen, `n8` Stage, `n9` Stone wall tables, `n10` Centre tables), 9 edges, all `observed` one way and `inferred` back. None is verified yet.
 
-What it does not have yet: live visual place recognition against the reference images, and any service that answers the orchestrator's `POST /v1/navigate`. Gaps are open points 8 to 10.
+What it does not have yet: localization tested on a walk the map was not built from, orientation and turn checks, and verified edges. Gaps are open points 9 to 11.
 
 ## Open points
 
 1. **Speech to text.** Decided: ElevenLabs Scribe v2, batch, one call per input. Wispr Flow was evaluated and rejected: no self-serve API (see [contracts.md](contracts.md#wispr-flow-evaluated-not-used)).
-2. **Worker rule.** Speak when the output differs from the previous output, plus a reminder after 7 s of the same output. If that proves too rigid, ask Jev a yes/no (Noul) question. A second model call per frame adds latency.
+2. **Worker rule.** Decided: a changed output goes to Jev as one Choice question (speak or quiet), and the same output is spoken again after 7 s ([contracts.md](contracts.md#worker-speak-or-stay-quiet)). Still to measure: the latency the extra call adds.
 3. **Text to speech.** Decided: the phone gets text on SSE, then fetches audio from the Orchestrator, which streams ElevenLabs Flash v2.5. Browser TTS is the fallback when that fails. Still to measure on the demo phone: time from `guidance` event to first sound, cached and uncached.
 4. **Where the backend runs.** Tunnel to the local GPU server or a Google Cloud service in front of it. Decides who holds the auth secret.
 5. **Silent frames.** When the output is unchanged, the server sends a heartbeat or state-only event so the phone can tell "quiet by choice" from "connection lost".
 6. **Command classifier runs once per input.** After a session starts, frames go straight to the worker. A new voice command re-enters at step 2.
-7. **Fewer than 5 frames.** At the start of a session the navigation engine gets 1 to 4 frames. The navigation engine owner should confirm it handles that, or the worker should wait for 5.
-8. **No service answers `POST /v1/navigate`.** nav-engine exposes maps and reference code, not the per-frame contract. Either nav-engine adds `/v1/navigate` (route state from the map, PDR progress, visual confirmation from reference images), or the contract changes so the orchestrator plans with the map itself. Staging uses the fake until then.
-9. **Route and map disagree.** The orchestrator's built-in route (`itnig-demo`: `start`, `corridor`, `counter`, `bathroom`) does not match the Itnig map's nodes (Main entrance, Kitchen, Stage, Drinks area…). Pick the demo destinations from the map and generate the orchestrator route from it, or map the missing spots.
-10. **No verified edges.** `plan_route` with `trust="verified"` finds no route on the current map. Someone has to walk and verify the demo route in the viewer before S11.
+7. **Fewer than 4 frames.** At the start of a session `localize` gets 1 to 3 frames. nav-api takes 1 to 4 and scores a burst by the mean over its frames, so this works.
+8. **Navigation contract.** Decided: the Orchestrator calls nav-api's `localize` and `route` ([contracts.md section 2](contracts.md#2-orchestrator--navigation-engine)); orient-orchestrator `main` does since 2026-10-10. Staging uses the fake navigation engine unless a release unticks `fake_nav`.
+9. **Destinations are not map nodes.** Destination ids must be node ids of the map, but the Orchestrator's `route.json` still lists `counter` and `bathroom`, which the Itnig map (`n1` to `n10`: Main entrance, Drinks area, Kitchen, Stage…) does not have, so `route` answers 404. Pick the demo destinations from the map and put their node ids in `route.json`, or map the missing spots.
+10. **No verified edges.** nav-api's `route` with `trust: verified` finds no route on the current map, so the Orchestrator routes over `observed` edges, walked once while mapping and never checked. Someone has to walk and verify the demo route in the viewer before S11, then set `NAV_TRUST=verified`.
+11. **Localization is untested on held-out walks.** The Itnig map has one walk, and that walk's frames match themselves. The thresholds (confirm at 0.60 with a 0.05 margin, lost under 0.45) are placeholders. A second walk of the demo route is needed to tune them before S11.

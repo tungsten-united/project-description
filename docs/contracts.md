@@ -5,7 +5,7 @@ Status: draft for S01 team review. Derived from [architecture.md](architecture.m
 Four boundaries:
 
 1. Phone ↔ Orchestrator: public HTTPS through the tunnel.
-2. Orchestrator ↔ Navigation engine: internal HTTP, not exposed to the phone. Not implemented by nav-engine yet, see [architecture.md](architecture.md#navigation-engine-nav-engine).
+2. Orchestrator ↔ Navigation engine: nav-engine's nav-api, server to server over HTTPS with nav-api's token. Never exposed to the phone. See [section 2](#2-orchestrator--navigation-engine) and [architecture.md](architecture.md#navigation-engine-nav-engine).
 3. Orchestrator ↔ Jev (TypeSafe): the Command step. Server-side only.
 4. Orchestrator ↔ ElevenLabs: speech to text (Scribe) and text to speech (Flash). Server-side only. See [section 4](#4-orchestrator--elevenlabs).
 
@@ -22,7 +22,7 @@ Two levels of state:
 - `sequence`: integer the phone increments on each input or frame for the client. The server keeps the highest one and drops anything older (latest frame wins).
 - `capturedAt`: epoch milliseconds **in server time**. The phone computes `offset = serverTime - Date.now()` from the client response and adds it, because phone and server clocks drift. Input older than `maxInputAgeMs` is rejected.
 - Auth: `POST /v1/clients` returns a `clientToken`. Send it as `Authorization: Bearer <token>`. `EventSource` cannot set headers, so the SSE URL uses `?token=`. The server redacts it from access logs.
-- Route step and destination IDs are fixed strings from the server's route definition, for example `start`, `corridor`, `counter`.
+- Destination IDs are node ids of the venue map, listed in the server's route definition, and route step IDs are the user's node on that map ([section 2](#2-orchestrator--navigation-engine)). The examples below use readable ids such as `corridor` and `counter`; the Itnig map's ids are `n1` to `n10`.
 
 Shared types:
 
@@ -202,7 +202,7 @@ interface Motion {
 }
 ```
 
-The orchestrator copies it onto each frame it forwards in `POST /v1/navigate`: `meta.frames[i]` becomes `{ requestId, capturedAt, motion }`. Existing orchestrators ignore the extra field. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
+Nothing on the navigation side uses it yet: the orchestrator ignores the field, and nav-api's `localize` takes no motion data, only an optional compass heading (`heading_deg`), which the orchestrator does not send. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
 
 ### HTTP errors
 
@@ -295,7 +295,7 @@ Which node the camera sees. Called for every evaluated frame, the first one of a
 
 ```json
 200 {
-  "map_id": "itnig", "model": "megaloc", "frames": 4,
+  "map_id": "itnig", "model": "gmberton/MegaLoc:5fe0dd6…", "frames": 4,
   "status": "confirmed", "reason": "clear: score >= 0.60, margin >= 0.05, next to the last confirmed node",
   "best": "n4", "margin": 0.08,
   "candidates": [{ "node": "n4", "name": "Stage corridor", "score": 0.71, "refs": [] }],

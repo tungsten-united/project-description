@@ -107,7 +107,7 @@ Suggested four-person split; choose actual names together:
 
 ## Codebase
 
-This repository holds the plan, the docs and the phone web app. The orchestrator backend is a separate Rust repo, [tungsten-united/orient-orchestrator](https://github.com/tungsten-united/orient-orchestrator). The navigation engine is [tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine): recorder, map pipeline, map API and live-navigation reference code. It does not serve `POST /v1/navigate` yet.
+This repository holds the plan, the docs and the phone web app. The orchestrator backend is a separate Rust repo, [tungsten-united/orient-orchestrator](https://github.com/tungsten-united/orient-orchestrator). The navigation engine is [tungsten-united/nav-engine](https://github.com/tungsten-united/nav-engine): the recorder, map pipeline and review (`map-api`, with a debugging frontend for the team), and `nav-api`, the live API the orchestrator calls for every frame (`localize`, then `route`; [contracts.md section 2](docs/contracts.md#2-orchestrator--navigation-engine)). The phone never calls nav-engine.
 
 ### Commands
 
@@ -143,7 +143,7 @@ The web app (`apps/web`, React + Tailwind + Vite):
 - `session/useSession.ts` wires the reducer, the API and speech together. It owns the stale-result rules: a local run counter plus the server `generation` drop late events, guidance is deduplicated by `guidanceId`, and Stop silences speech locally before telling the server.
 - `output/browserSpeech.ts` is the `SpeechAdapter` over browser TTS. Per the contract it becomes the fallback; the primary adapter plays `GET /v1/clients/{clientId}/speech` (ElevenLabs) in an `<audio>` element.
 
-Deployment ([docs/deployment.md](docs/deployment.md)): the web app is static assets on Cloudflare (`apps/web/wrangler.jsonc`). `.github/workflows/web.yml` runs the checks on every PR and deploys on merge to `main`. It skips the deploy with a warning when Cloudflare secrets are missing. The orchestrator is planned for Cloud Run, and `infra/gcp/setup.sh` provisions it once. The navigation engine's map API (`nav-api`) runs on Cloud Run with the maps in the team bucket; its models run on a teammate GPU (helium) behind a tunnel.
+Deployment ([docs/deployment.md](docs/deployment.md)): the web app is static assets on Cloudflare (`apps/web/wrangler.jsonc`). `.github/workflows/web.yml` runs the checks on every PR and deploys on merge to `main`. It skips the deploy with a warning when Cloudflare secrets are missing. The orchestrator is planned for Cloud Run, and `infra/gcp/setup.sh` provisions it once. nav-engine runs two Cloud Run services on the team bucket: `nav-api` (live, read-only, for the orchestrator) and `map-api` (recordings, map builds, review, the debugging frontend). Their models run on a teammate GPU (helium) behind a tunnel.
 
 ### Known drift
 
