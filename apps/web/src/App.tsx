@@ -11,7 +11,7 @@ import { createDebugLogger, noopLogger } from './session/debugLog';
 import { createHttpApi } from './session/httpApi';
 import { createMockApi, type MockApi } from './session/mockApi';
 import { isRunning, type ViewState } from './session/machine';
-import type { Capture, OrchestratorApi, SpeechAdapter } from './session/types';
+import type { Capture, MapChoice, OrchestratorApi, SpeechAdapter } from './session/types';
 import { useSession } from './session/useSession';
 
 interface Copy {
@@ -52,6 +52,23 @@ function defaultApi(): OrchestratorApi {
 }
 
 const SR_PREF_KEY = 'orient.screenReaderSpeech';
+const PLACE_KEY = 'orient.place';
+
+function readPlace(): string | null {
+  try {
+    return localStorage.getItem(PLACE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writePlace(mapId: string) {
+  try {
+    localStorage.setItem(PLACE_KEY, mapId);
+  } catch {
+    // Private mode or blocked storage: the choice just lasts for this visit.
+  }
+}
 
 function readPreference(): boolean {
   try {
@@ -105,10 +122,25 @@ export function App({ api, speech, capture, demo = false }: AppProps) {
     () => capture ?? (import.meta.env.VITE_API_BASE_URL && !demo ? createBrowserCapture() : createFixtureCapture()),
     [capture, demo],
   );
+  // The places the orchestrator can guide in, the default first. The choice is remembered on this phone.
+  const [maps, setMaps] = useState<MapChoice[]>([]);
+  const [chosenPlace, setChosenPlace] = useState(readPlace);
+  useEffect(() => {
+    let current = true;
+    resolvedApi
+      .listMaps?.()
+      .then((list) => current && setMaps(list))
+      .catch((e: unknown) => logger.log('warn', 'maps_unavailable', String(e)));
+    return () => {
+      current = false;
+    };
+  }, [resolvedApi, logger]);
+  const mapId = maps.some((m) => m.mapId === chosenPlace) ? (chosenPlace ?? undefined) : maps[0]?.mapId;
   const { view, places, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture, {
     logger,
     motion,
     requireMotion: live,
+    mapId,
   });
 
   // Keeps the panel's motion tab live while debugging.
@@ -226,6 +258,27 @@ export function App({ api, speech, capture, demo = false }: AppProps) {
           <p className="text-xl leading-snug text-ink-faint">What the assistant says appears here.</p>
         )}
       </section>
+
+      {!running && maps.length > 1 && (
+        <label className="flex shrink-0 flex-col gap-1.5 text-lg">
+          <span>Place</span>
+          <select
+            value={mapId}
+            onChange={(e) => {
+              setChosenPlace(e.target.value);
+              writePlace(e.target.value);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            className="min-h-12 rounded-2xl border-[1.5px] border-line bg-sand px-4 text-xl font-bold"
+          >
+            {maps.map((m) => (
+              <option key={m.mapId} value={m.mapId}>
+                {m.place}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {!running && (
         <details className="shrink-0 rounded-2xl border-[1.5px] border-line bg-sand">

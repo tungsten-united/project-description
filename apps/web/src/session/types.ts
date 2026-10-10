@@ -41,9 +41,9 @@ export interface ClientInfo {
   generation: number;
   serverTime: number;
   phase: Phase;
+  /** The map the client guides on (`routeId`) and its places: every node, by its name. */
   route: {
     routeId: string;
-    startStepId: string;
     destinations: { destinationId: string; label: string }[];
   };
   limits: Limits;
@@ -101,8 +101,17 @@ export interface FrameInput {
 }
 
 /** The phone's only view of the orchestrator. Implemented by the mock and by the HTTP client. */
+/** A place the phone can guide in: a map published on nav-api (`GET /v1/maps`). */
+export interface MapChoice {
+  mapId: string;
+  place: string;
+}
+
 export interface OrchestratorApi {
-  createClient(): Promise<ClientInfo>;
+  /** Without a map id the orchestrator guides on its default map. */
+  createClient(mapId?: string): Promise<ClientInfo>;
+  /** The places to choose from, the default first. Absent for backends without a choice (the scripted demo). */
+  listMaps?(): Promise<MapChoice[]>;
   subscribe(client: ClientInfo, onEvent: (event: ServerEvent) => void): () => void;
   sendInput(client: ClientInfo, input: UserInput): Promise<void>;
   sendFrame(client: ClientInfo, input: FrameInput): Promise<void>;

@@ -2,6 +2,7 @@ import {
   ApiError,
   type ClientInfo,
   type FrameInput,
+  type MapChoice,
   type Motion,
   type OrchestratorApi,
   type ServerEvent,
@@ -41,8 +42,15 @@ export function createHttpApi(baseUrl: string): OrchestratorApi {
   }
 
   return {
-    async createClient() {
-      const res = await fetch(`${root}/clients`, { method: 'POST' });
+    async listMaps() {
+      const res = await fetch(`${root}/maps`);
+      if (!res.ok) await fail(res);
+      return (await res.json()) as MapChoice[];
+    },
+
+    async createClient(mapId) {
+      const body = mapId ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mapId }) } : {};
+      const res = await fetch(`${root}/clients`, { method: 'POST', ...body });
       if (!res.ok) await fail(res);
       const client = (await res.json()) as ClientInfo;
       offsets.set(client.clientId, client.serverTime - Date.now());

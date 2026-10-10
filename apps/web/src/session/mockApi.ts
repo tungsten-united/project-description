@@ -63,7 +63,6 @@ export function createMockApi(stepMs = 2500): MockApi {
         phase: 'awaiting_destination',
         route: {
           routeId: 'itnig-demo',
-          startStepId: 'n1',
           destinations: DEMO_PLACES.map((p) => ({ ...p })),
         },
         limits: {

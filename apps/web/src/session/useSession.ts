@@ -55,13 +55,15 @@ interface SessionOptions {
    * sets it, since nav-api's walked-distance gate needs the phone's steps; demo and mock modes have no sensors.
    */
   requireMotion?: boolean;
+  /** The place to guide in (`GET /v1/maps`); undefined: the orchestrator's default map. */
+  mapId?: string;
 }
 
 export function useSession(
   api: OrchestratorApi,
   speech: SpeechAdapter,
   capture: Capture,
-  { logger = noopLogger, motion = noMotion, requireMotion = false }: SessionOptions = {},
+  { logger = noopLogger, motion = noMotion, requireMotion = false, mapId }: SessionOptions = {},
 ) {
   const viewRef = useRef<ViewState>(initialView);
   const [view, setView] = useState<ViewState>(initialView);
@@ -218,7 +220,7 @@ export function useSession(
     }
     let client: ClientInfo;
     try {
-      client = await api.createClient();
+      client = await api.createClient(mapId);
     } catch (e) {
       if (id === r.id) halt('error', UNAVAILABLE_TEXT, `create_client: ${String(e)}`);
       return;
@@ -240,7 +242,7 @@ export function useSession(
     send({ type: 'prompt_started', text: prompt });
     await say(prompt); // a failed prompt still shows as text, so continue
     if (id === r.id) send({ type: 'prompt_done' });
-  }, [api, capture, halt, logger, motion, onEvent, requireMotion, say, send, speech]);
+  }, [api, capture, halt, logger, mapId, motion, onEvent, requireMotion, say, send, speech]);
 
   const finishRecording = useCallback(async () => {
     const r = run.current;
