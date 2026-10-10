@@ -65,10 +65,11 @@ Called after the double tap or Start button. No body. No session exists until th
     "maxAudioMs": 10000,
     "maxAudioBytes": 1000000,
     "maxFrameBytes": 512000,
-    "maxFrameEdgePx": 1280,
+    "maxFrameEdgePx": 640,
     "maxInputAgeMs": 3000,
     "heartbeatMs": 5000,
-    "navFrames": 4
+    "navFrames": 4,
+    "frameGapMs": 100
   }
 }
 ```
@@ -114,7 +115,7 @@ One camera frame while `navigating`. It joins the current session's buffer of th
 202 { "requestId": "…", "accepted": true }
 ```
 
-The phone sends the next frame after it gets the 202, so at most one upload is in flight. An evaluation sends `localize` every buffered frame it has not sent before (at most 4), so each frame is scored once and a frame that arrives during a call goes with the next one.
+The phone captures the next frame `frameGapMs` after it gets the 202, so at most one upload is in flight and the orchestrator sets the pace of `localize` calls. Each frame is scaled so its longest edge is at most `maxFrameEdgePx`: localization squashes frames to 322 px, so larger ones only cost upload time. An evaluation sends `localize` every buffered frame it has not sent before (at most 4), so each frame is scored once and a frame that arrives during a call goes with the next one.
 
 ### `GET /v1/clients/{clientId}/speech?token=…&text=…`
 

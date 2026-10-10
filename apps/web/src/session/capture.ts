@@ -157,9 +157,9 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7, pictureTim
       });
     },
 
-    grabFrame() {
+    grabFrame(edge = maxEdge) {
       if (!video || video.videoWidth === 0) return Promise.resolve(null);
-      const { width, height } = fitWithin(video.videoWidth, video.videoHeight, maxEdge);
+      const { width, height } = fitWithin(video.videoWidth, video.videoHeight, edge);
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;

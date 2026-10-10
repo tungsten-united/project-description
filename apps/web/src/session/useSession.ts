@@ -14,7 +14,7 @@ import {
 
 const MAX_LISTEN_MS = 8000;
 /** Gap between frame uploads. The next frame goes only after the previous 202. */
-const FRAME_GAP_MS = 500;
+const FRAME_GAP_MS = 500; // when the server sends no limits.frameGapMs
 export const UNAVAILABLE_TEXT = 'Guidance is unavailable. Press Try again.';
 export const PERMISSION_TEXT =
   "I need the camera and microphone. Allow them in the browser's site settings. On iPhone, also check Settings, Chrome or Safari, Camera and Microphone. Then press Try again.";
@@ -249,7 +249,7 @@ export function useSession(
     const id = r.id;
     send({ type: 'recording_done' });
     const capturedAt = Date.now();
-    const [audio, frame] = await Promise.all([capture.stopRecording(), capture.grabFrame()]);
+    const [audio, frame] = await Promise.all([capture.stopRecording(), capture.grabFrame(client.limits.maxFrameEdgePx)]);
     if (id !== r.id) return;
     logger.local?.('info', 'recording_stopped', audio ? `${(audio.size / 1024).toFixed(0)} KB` : 'no audio');
     const levels = capture.voiceStats?.();
@@ -301,7 +301,7 @@ export function useSession(
       while (!cancelled && id === r.id && r.client) {
         const client = r.client;
         const capturedAt = Date.now();
-        const frame = await capture.grabFrame();
+        const frame = await capture.grabFrame(client.limits.maxFrameEdgePx);
         if (cancelled || id !== r.id) return;
         if (frame) {
           r.sequence += 1;
@@ -320,7 +320,7 @@ export function useSession(
             })
             .catch(() => undefined); // 409s resync through events; a dead stream trips the watchdog
         }
-        await new Promise((resolve) => setTimeout(resolve, FRAME_GAP_MS));
+        await new Promise((resolve) => setTimeout(resolve, client.limits.frameGapMs ?? FRAME_GAP_MS));
       }
     })();
     return () => {
