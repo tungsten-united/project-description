@@ -203,6 +203,7 @@ The phone ignores any event whose `generation` is older than its current one, an
 | `heartbeat` | `state` fields, `lastRequestId \| null, quietReason \| null` | Nothing spoken. Proves the connection is alive |
 | `stop` | `reason: "user_stop" \| "voice_cancel" \| "arrived" \| "error"` | Stop capture and speech |
 | `error` | `code, stage, text, retryable` | Speak `text` ("Guidance is unavailable."), go to `stopped`, offer retry |
+| `log` | `kind` (the trace entry's `kind`), `entry` ([Run trace entry](#run-trace-entry)) | Nothing spoken. Debug panel only. Sent only when the server runs with `DEBUG_PAGE`, never in production |
 
 `guidance`:
 

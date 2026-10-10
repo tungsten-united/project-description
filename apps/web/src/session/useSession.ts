@@ -113,7 +113,7 @@ export function useSession(api: OrchestratorApi, speech: SpeechAdapter, capture:
           halt('error', event.text);
           return;
         default:
-          return; // heartbeat only proves the stream is alive
+          return; // heartbeat only proves the stream is alive; log is for the debug panel
       }
     },
     [halt, send, speech],

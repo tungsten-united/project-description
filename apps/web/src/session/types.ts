@@ -3,6 +3,7 @@
 export type Action = 'wait' | 'turn' | 'continue' | 'arrived' | 'stop';
 export type Direction = 'left' | 'right' | 'around' | null;
 export type Phase = 'awaiting_destination' | 'navigating' | 'arrived' | 'stopped';
+export type TraceKind = 'client' | 'input' | 'frame' | 'stop' | 'retry';
 export type StopReason = 'user_stop' | 'voice_cancel' | 'arrived' | 'error';
 
 export interface Limits {
@@ -57,6 +58,7 @@ export type ServerEvent = Envelope &
     | { type: 'heartbeat'; lastRequestId: string | null; quietReason: string | null }
     | { type: 'stop'; reason: StopReason }
     | { type: 'error'; code: string; stage: string; text: string; retryable: boolean }
+    | { type: 'log'; kind: TraceKind; entry: Record<string, unknown> }
   );
 
 export interface UserInput {
