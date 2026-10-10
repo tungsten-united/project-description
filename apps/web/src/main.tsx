@@ -3,12 +3,15 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import { App } from './App';
 
+const route = location.pathname.toLowerCase().replace(/\/+$/, '');
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {location.pathname.toLowerCase() === '/tungsten' ? (
+    {route === '/tungsten' ? (
       <img src="/tungsten.jpeg" alt="Tungsten" className="mx-auto max-h-screen" />
     ) : (
-      <App />
+      // /itnig-demo is a scripted walk that runs entirely in the browser, for anyone not on the real route.
+      <App demo={route === '/itnig-demo'} />
     )}
   </StrictMode>,
 );

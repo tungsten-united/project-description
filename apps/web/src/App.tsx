@@ -9,7 +9,7 @@ import { createDebugStore, teeLogger, withInspection } from './debug/store';
 import { createMotionTracker, noMotion } from './motion/tracker';
 import { createDebugLogger, noopLogger } from './session/debugLog';
 import { createHttpApi } from './session/httpApi';
-import { createMockApi } from './session/mockApi';
+import { createMockApi, type MockApi } from './session/mockApi';
 import { isRunning, type ViewState } from './session/machine';
 import type { Capture, OrchestratorApi, SpeechAdapter } from './session/types';
 import { useSession } from './session/useSession';
@@ -19,14 +19,22 @@ interface Copy {
   caption: string;
 }
 
-function copyFor(view: ViewState): Copy {
+function copyFor(view: ViewState, demo: boolean): Copy {
   switch (view.state) {
     case 'idle':
-      return { label: 'Ready', caption: 'Press Start, or double tap anywhere, to begin.' };
+      return {
+        label: 'Ready',
+        caption: demo
+          ? 'A scripted walk, no camera or microphone. Press Start, then tap a place.'
+          : 'Orient guides you indoors by voice. Press Start, allow the camera, microphone and motion, then say where you want to go.',
+      };
     case 'prompting':
       return { label: 'Starting', caption: 'Listen to the question.' };
     case 'listening':
-      return { label: 'Listening', caption: 'Say where you want to go, then press Done.' };
+      return {
+        label: 'Listening',
+        caption: demo ? 'Tap the place you want to go to.' : 'Say where you want to go, then press Done.',
+      };
     case 'waiting':
       return { label: 'Guiding', caption: 'Keep the phone raised. Quiet means keep going. Stop is at the top.' };
     case 'speaking':
@@ -65,21 +73,26 @@ interface AppProps {
   api?: OrchestratorApi;
   speech?: SpeechAdapter;
   capture?: Capture;
+  /** The /itnig-demo page: a scripted walk in the browser. No camera, microphone, backend or logging. */
+  demo?: boolean;
 }
 
-export function App({ api, speech, capture }: AppProps) {
+export function App({ api, speech, capture, demo = false }: AppProps) {
   // DEBUG_MODE is a build variable (VITE_DEBUG_MODE=true). It adds a cog with camera, logs, motion and payloads.
   const debugStore = useMemo(() => (import.meta.env.VITE_DEBUG_MODE === 'true' ? createDebugStore() : null), []);
-  const baseApi = useMemo(() => api ?? defaultApi(), [api]);
+  const baseApi = useMemo(() => api ?? (demo ? createMockApi() : defaultApi()), [api, demo]);
   const resolvedApi = useMemo(() => (debugStore ? withInspection(baseApi, debugStore) : baseApi), [baseApi, debugStore]);
   // Debug batches go to the orchestrator, which prints them into Cloud Logging. Off in demo mode.
   const logger = useMemo(() => {
     const base = import.meta.env.VITE_API_BASE_URL;
-    const remote = base ? createDebugLogger(base) : noopLogger;
+    const remote = base && !demo ? createDebugLogger(base) : noopLogger;
     return debugStore ? teeLogger(remote, debugStore) : remote;
-  }, [debugStore]);
+  }, [debugStore, demo]);
   // Motion sensors only matter when there is a backend to send them to.
-  const motion = useMemo(() => (import.meta.env.VITE_API_BASE_URL ? createMotionTracker() : noMotion), []);
+  const motion = useMemo(
+    () => (import.meta.env.VITE_API_BASE_URL && !demo ? createMotionTracker() : noMotion),
+    [demo],
+  );
   // Default: the app's own voice is the only voice. Opt-in: the user's screen reader reads the text.
   const [screenReaderSpeech, setScreenReaderSpeech] = useState(readPreference);
   const [announcement, setAnnouncement] = useState('');
@@ -91,10 +104,10 @@ export function App({ api, speech, capture }: AppProps) {
   const resolvedSpeech = screenReaderSpeech ? readerVoice : appVoice;
   // Demo mode has no backend to receive media, so it skips the permission prompts.
   const resolvedCapture = useMemo(
-    () => capture ?? (import.meta.env.VITE_API_BASE_URL ? createBrowserCapture() : createFixtureCapture()),
-    [capture],
+    () => capture ?? (import.meta.env.VITE_API_BASE_URL && !demo ? createBrowserCapture() : createFixtureCapture()),
+    [capture, demo],
   );
-  const { view, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture, {
+  const { view, places, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture, {
     logger,
     motion,
   });
@@ -107,7 +120,11 @@ export function App({ api, speech, capture }: AppProps) {
   }, [debugStore, motion]);
 
   const running = isRunning(view.state);
-  const { label, caption } = copyFor(view);
+  const { label, caption } = copyFor(view, demo);
+  const chooseDemoPlace = (place: string) => {
+    (baseApi as Partial<MockApi>).setDestination?.(place);
+    finishRecording();
+  };
 
   // After Stop, arrival or an error the app is silent, so moving focus back to Start is announced once.
   const startRef = useRef<HTMLButtonElement>(null);
@@ -135,7 +152,7 @@ export function App({ api, speech, capture }: AppProps) {
           <img src="/icons/icon-192.png" alt="" width={32} height={32} className="size-8 rounded-lg" />
           <span className="text-lg font-bold tracking-[0.18em] text-slate uppercase">Orient</span>
         </span>
-        {!import.meta.env.VITE_API_BASE_URL && <span>Demo mode</span>}
+        {demo ? <span>Scripted demo</span> : !import.meta.env.VITE_API_BASE_URL && <span>Demo mode</span>}
       </header>
 
       <div role="status" className="sr-only">
@@ -161,6 +178,27 @@ export function App({ api, speech, capture }: AppProps) {
         <p className="min-h-[3.25rem] text-xl leading-snug text-ink-soft">{caption}</p>
       </div>
 
+      {view.state === 'listening' && places.length > 0 && !demo && (
+        <p className="text-xl font-bold" data-testid="places-hint">
+          Say: {places.join(' · ')}
+        </p>
+      )}
+
+      {view.state === 'listening' && demo && (
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Places">
+          {places.map((place) => (
+            <button
+              key={place}
+              type="button"
+              onClick={() => chooseDemoPlace(place)}
+              className="min-h-14 grow rounded-2xl border-2 border-slate bg-sand px-4 text-2xl font-bold"
+            >
+              {place}
+            </button>
+          ))}
+        </div>
+      )}
+
       {view.detail && (
         <p className="text-sm break-words text-ink-faint select-text" data-testid="technical-detail">
           Technical detail: {view.detail}
@@ -179,20 +217,23 @@ export function App({ api, speech, capture }: AppProps) {
       </section>
 
       {!running && (
-        <button
-          type="button"
-          role="switch"
-          aria-checked={screenReaderSpeech}
-          onClick={() => {
-            const next = !screenReaderSpeech;
-            setScreenReaderSpeech(next);
-            writePreference(next);
-          }}
-          className="flex min-h-12 shrink-0 items-center justify-between gap-3 rounded-2xl border-[1.5px] border-line bg-sand px-4 text-left text-lg"
-        >
-          <span>Read guidance with my screen reader</span>
-          <span className="font-bold">{screenReaderSpeech ? 'On' : 'Off'}</span>
-        </button>
+        <details className="shrink-0 rounded-2xl border-[1.5px] border-line bg-sand">
+          <summary className="flex min-h-12 cursor-pointer items-center px-4 text-lg">Accessibility</summary>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={screenReaderSpeech}
+            onClick={() => {
+              const next = !screenReaderSpeech;
+              setScreenReaderSpeech(next);
+              writePreference(next);
+            }}
+            className="flex min-h-12 w-full items-center justify-between gap-3 px-4 pb-2 text-left text-lg"
+          >
+            <span>Read guidance with my screen reader</span>
+            <span className="font-bold">{screenReaderSpeech ? 'On' : 'Off'}</span>
+          </button>
+        </details>
       )}
 
       {!running && (

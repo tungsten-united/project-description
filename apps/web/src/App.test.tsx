@@ -37,7 +37,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Arrived' })).toBeInTheDocument());
-    expect(speech.spoken.at(-1)).toBe('You have arrived at the coffee counter.');
+    expect(speech.spoken.at(-1)).toBe('You have arrived at the drinks area.');
   });
 
   it('Stop silences speech and ignores late guidance', async () => {
@@ -79,6 +79,7 @@ describe('speech modes', () => {
   it('opt-in mode puts guidance text in a live region and plays no app audio', async () => {
     const speech = fakeSpeech();
     render(<App api={createMockApi(5)} speech={speech} capture={createFixtureCapture()} />);
+    await userEvent.click(screen.getByText('Accessibility'));
     await userEvent.click(screen.getByRole('switch', { name: /screen reader/i }));
     await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Done' }, { timeout: 9000 }));
@@ -136,5 +137,32 @@ describe('header', () => {
     expect(logo).toHaveAttribute('alt', '');
     expect(logo!.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(name).toHaveClass('uppercase');
+  });
+});
+
+describe('first-time help', () => {
+  it('explains what Orient is and what to allow before Start', () => {
+    render(<App api={createMockApi(10)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    expect(screen.getByText(/guides you indoors by voice/i)).toBeInTheDocument();
+    expect(screen.getByText(/allow the camera, microphone and motion/i)).toBeInTheDocument();
+  });
+
+  it('shows the places to say while listening, from the route the server returned', async () => {
+    render(<App api={createMockApi(10)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
+    await screen.findByRole('heading', { name: 'Listening' });
+    expect(screen.getByTestId('places-hint')).toHaveTextContent('Say: drinks area · kitchen · stage');
+  });
+});
+
+describe('scripted demo page', () => {
+  it('is labelled as scripted and walks to the place that was tapped', async () => {
+    render(<App demo api={createMockApi(5)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    expect(screen.getByText('Scripted demo')).toBeInTheDocument();
+    expect(screen.getByText(/no camera or microphone/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'kitchen' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Arrived' })).toBeInTheDocument());
+    expect(screen.getByLabelText('Last thing said')).toHaveTextContent('You have arrived at the kitchen.');
   });
 });
