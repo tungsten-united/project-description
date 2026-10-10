@@ -209,6 +209,10 @@ export function useSession(
     const capturedAt = Date.now();
     const [audio, frame] = await Promise.all([capture.stopRecording(), capture.grabFrame()]);
     if (id !== r.id) return;
+    const levels = capture.voiceStats?.();
+    if (levels) {
+      logger.log('info', 'voice_levels', `floor=${levels.noiseFloorDb}dB peak=${levels.peakDb}dB open=${levels.openRatio} frames=${levels.frames}`);
+    }
     if (!audio) {
       send({ type: 'speak', text: NOT_HEARD_TEXT });
       await speech.speak(NOT_HEARD_TEXT);

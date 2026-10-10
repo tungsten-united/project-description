@@ -1,3 +1,4 @@
+import { audioConstraints, createVoiceChain, voiceIsolationEnabled, type VoiceChain } from '../audio/voiceIsolation';
 import { CaptureError, type Capture } from './types';
 
 const AUDIO_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
@@ -39,12 +40,18 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
   let video: HTMLVideoElement | null = null;
   let recorder: MediaRecorder | null = null;
   let chunks: Blob[] = [];
+  let chain: VoiceChain | null = null;
+  let lastStats: ReturnType<VoiceChain['stats']> | null = null;
 
   async function open(): Promise<MediaStream> {
     const md = navigator.mediaDevices;
     if (!md?.getUserMedia) throw new CaptureError('unavailable', 'Media capture is not available in this browser.');
     try {
-      return await md.getUserMedia({ audio: true, video: { facingMode: { ideal: 'environment' } } });
+      const supported = (md.getSupportedConstraints?.() ?? {}) as Record<string, boolean | undefined>;
+      return await md.getUserMedia({
+        audio: audioConstraints(voiceIsolationEnabled(), supported) as MediaTrackConstraints,
+        video: { facingMode: { ideal: 'environment' } },
+      });
     } catch (e) {
       const err = e as DOMException;
       const detail = `${err.name}: ${err.message} (${await permissionStates()}, secure=${String(window.isSecureContext)})`;
@@ -58,6 +65,13 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
   return {
     async acquire() {
       stream = await open();
+      if (voiceIsolationEnabled()) {
+        try {
+          chain = createVoiceChain(new MediaStream(stream.getAudioTracks()));
+        } catch {
+          chain = null; // fall back to the raw microphone
+        }
+      }
       video = document.createElement('video');
       video.muted = true;
       video.playsInline = true;
@@ -69,7 +83,7 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
 
     startRecording() {
       if (!stream) return;
-      const audioOnly = new MediaStream(stream.getAudioTracks());
+      const audioOnly = chain?.output ?? new MediaStream(stream.getAudioTracks());
       const mimeType = pickAudioMime((t) => MediaRecorder.isTypeSupported(t));
       chunks = [];
       recorder = new MediaRecorder(audioOnly, mimeType ? { mimeType } : undefined);
@@ -79,7 +93,10 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
       recorder.start();
     },
 
+    voiceStats: () => lastStats,
+
     stopRecording() {
+      lastStats = chain ? chain.stats() : null;
       const r = recorder;
       recorder = null;
       if (!r || r.state === 'inactive') return Promise.resolve(null);
@@ -104,6 +121,8 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
     },
 
     release() {
+      chain?.dispose();
+      chain = null;
       if (recorder && recorder.state !== 'inactive') recorder.stop();
       recorder = null;
       stream?.getTracks().forEach((t) => t.stop());
