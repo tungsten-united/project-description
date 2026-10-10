@@ -8,7 +8,7 @@ set -euo pipefail
 
 : "${PROJECT_ID:?Set PROJECT_ID}"
 REGION="${REGION:-europe-west1}"
-GITHUB_REPO="${GITHUB_REPO:-tungsten-united/project-description}"
+GITHUB_REPO="${GITHUB_REPO:-tungsten-united/orient-frontend}"
 REPO_NAME="orient"
 RUNTIME_SA="orient-orchestrator"
 DEPLOY_SA="orient-deployer"
