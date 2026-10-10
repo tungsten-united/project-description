@@ -86,6 +86,12 @@ export function App({ api, speech, capture }: AppProps) {
         <p className="min-h-[3.25rem] text-xl leading-snug text-ink-soft">{caption}</p>
       </div>
 
+      {view.detail && (
+        <p className="text-sm break-words text-ink-faint select-text" data-testid="technical-detail">
+          Technical detail: {view.detail}
+        </p>
+      )}
+
       <section
         aria-label="Last thing said"
         className="flex min-h-0 grow flex-col justify-center overflow-hidden rounded-3xl border-[1.5px] border-line bg-sand p-5"

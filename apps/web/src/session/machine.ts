@@ -9,6 +9,8 @@ export interface ViewState {
   spoken: string;
   stopReason: StopReason | null;
   error: string | null;
+  /** Technical detail for a stop caused by an error, shown small for debugging. */
+  detail: string | null;
 }
 
 export type MachineEvent =
@@ -18,15 +20,15 @@ export type MachineEvent =
   | { type: 'recording_done' }
   | { type: 'speak'; text: string }
   | { type: 'speech_done'; then: 'listen' | 'wait' }
-  | { type: 'stop'; reason: StopReason; error?: string };
+  | { type: 'stop'; reason: StopReason; error?: string; detail?: string };
 
-export const initialView: ViewState = { state: 'idle', spoken: '', stopReason: null, error: null };
+export const initialView: ViewState = { state: 'idle', spoken: '', stopReason: null, error: null, detail: null };
 
 export function reduce(view: ViewState, event: MachineEvent): ViewState {
   switch (event.type) {
     case 'start':
       return view.state === 'idle' || view.state === 'stopped'
-        ? { state: 'prompting', spoken: '', stopReason: null, error: null }
+        ? { state: 'prompting', spoken: '', stopReason: null, error: null, detail: null }
         : view;
     case 'prompt_started':
       return view.state === 'prompting' ? { ...view, spoken: event.text } : view;
@@ -43,7 +45,7 @@ export function reduce(view: ViewState, event: MachineEvent): ViewState {
     case 'stop':
       return view.state === 'idle' || view.state === 'stopped'
         ? view
-        : { ...view, state: 'stopped', stopReason: event.reason, error: event.error ?? null };
+        : { ...view, state: 'stopped', stopReason: event.reason, error: event.error ?? null, detail: event.detail ?? null };
   }
 }
 

@@ -103,9 +103,12 @@ export type CaptureErrorCode = 'permission_denied' | 'unavailable';
 
 export class CaptureError extends Error {
   readonly code: CaptureErrorCode;
-  constructor(code: CaptureErrorCode, message: string) {
+  /** Browser error name and permission states, for the on-screen technical detail. */
+  readonly detail: string;
+  constructor(code: CaptureErrorCode, message: string, detail = '') {
     super(message);
     this.code = code;
+    this.detail = detail;
   }
 }
 
