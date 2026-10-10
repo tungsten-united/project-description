@@ -4,6 +4,7 @@ import { createLiveRegionSpeech } from './output/liveRegionSpeech';
 import { createServerSpeech } from './output/serverSpeech';
 import { createBrowserCapture, createFixtureCapture } from './session/capture';
 import { DebugPanel } from './debug/DebugPanel';
+import { SessionLogPanel } from './debug/SessionLogPanel';
 import { createDebugStore, teeLogger, withInspection } from './debug/store';
 import { createMotionTracker, noMotion } from './motion/tracker';
 import { createDebugLogger, noopLogger } from './session/debugLog';
@@ -126,8 +127,9 @@ export function App({ api, speech, capture }: AppProps) {
       }}
     >
       {debugStore && <DebugPanel store={debugStore} capture={resolvedCapture} />}
+      {debugStore && <SessionLogPanel store={debugStore} />}
 
-      <header className="flex items-center justify-between pr-14 text-base text-ink-soft">
+      <header className="flex items-center justify-between pr-28 text-base text-ink-soft">
         <span className="tracking-wide">Orient</span>
         {!import.meta.env.VITE_API_BASE_URL && <span>Demo mode</span>}
       </header>

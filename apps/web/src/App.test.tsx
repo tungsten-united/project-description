@@ -108,3 +108,20 @@ describe('debug mode', () => {
     vi.unstubAllEnvs();
   });
 });
+
+describe('session log panel', () => {
+  it('records the session from Start with tagged lines and can be filtered', async () => {
+    vi.stubEnv('VITE_DEBUG_MODE', 'true');
+    render(<App api={createMockApi(10)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
+    await screen.findByRole('heading', { name: 'Listening' });
+    await userEvent.click(screen.getByRole('button', { name: 'Open session log' }));
+    const dialog = screen.getByRole('dialog', { name: 'Session log' });
+    expect(dialog).toHaveTextContent('START tapped');
+    expect(dialog).toHaveTextContent('client created');
+    expect(dialog).toHaveTextContent('speaking: "Where would you like to go?"');
+    await userEvent.click(screen.getByRole('button', { name: /^TTS/ }));
+    expect(dialog).not.toHaveTextContent('speaking: "Where would you like to go?"');
+    vi.unstubAllEnvs();
+  });
+});
