@@ -1,4 +1,12 @@
-import { ApiError, type ClientInfo, type FrameInput, type OrchestratorApi, type ServerEvent, type UserInput } from './types';
+import {
+  ApiError,
+  type ClientInfo,
+  type FrameInput,
+  type Motion,
+  type OrchestratorApi,
+  type ServerEvent,
+  type UserInput,
+} from './types';
 
 /** Client for docs/contracts.md section 1. */
 export function createHttpApi(baseUrl: string): OrchestratorApi {
@@ -8,6 +16,9 @@ export function createHttpApi(baseUrl: string): OrchestratorApi {
 
   const auth = (c: ClientInfo) => ({ Authorization: `Bearer ${c.clientToken}` });
   const serverTime = (c: ClientInfo, localMs: number) => localMs + (offsets.get(c.clientId) ?? 0);
+  /** `measuredAt` is local time on the phone, like `capturedAt`, so both are sent in server time. */
+  const motionMeta = (c: ClientInfo, m: Motion | null) =>
+    m ? { ...m, measuredAt: serverTime(c, m.measuredAt) } : null;
 
   async function fail(res: Response): Promise<never> {
     let code = 'http_error';
@@ -61,6 +72,7 @@ export function createHttpApi(baseUrl: string): OrchestratorApi {
           generation: input.generation,
           sequence: input.sequence,
           capturedAt: serverTime(client, input.capturedAt),
+          motion: motionMeta(client, input.motion),
         }),
       );
       form.set('audio', input.audio, input.audio.type.includes('mp4') ? 'input.mp4' : 'input.webm');
@@ -78,6 +90,7 @@ export function createHttpApi(baseUrl: string): OrchestratorApi {
           sequence: input.sequence,
           capturedAt: serverTime(client, input.capturedAt),
           clientRouteStepId: input.clientRouteStepId,
+          motion: motionMeta(client, input.motion),
         }),
       );
       form.set('frame', input.frame, 'frame.jpg');

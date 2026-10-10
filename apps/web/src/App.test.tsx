@@ -88,3 +88,23 @@ describe('speech modes', () => {
     expect(speech.spoken).toEqual([]);
   }, 20000);
 });
+
+describe('debug mode', () => {
+  it('shows no cog unless VITE_DEBUG_MODE is true', () => {
+    render(<App api={createMockApi(10)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    expect(screen.queryByRole('button', { name: 'Open debug panel' })).toBeNull();
+  });
+
+  it('shows the cog and a panel with camera, logs, motion and payloads when enabled', async () => {
+    vi.stubEnv('VITE_DEBUG_MODE', 'true');
+    render(<App api={createMockApi(10)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open debug panel' }));
+    expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument();
+    for (const name of ['Camera', 'Logs', 'Motion', 'Payloads']) {
+      expect(screen.getByRole('tab', { name })).toBeInTheDocument();
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Pause frames' }));
+    expect(screen.getByRole('button', { name: 'Resume frames' })).toBeInTheDocument();
+    vi.unstubAllEnvs();
+  });
+});

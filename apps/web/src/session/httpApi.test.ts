@@ -32,12 +32,26 @@ describe('http api', () => {
       capturedAt: 700,
       audio: new Blob(['a'], { type: 'audio/webm' }),
       frame: null,
+      motion: {
+        speedMps: 0.9,
+        cadenceHz: 1.3,
+        stepCount: 12,
+        stepLengthM: 0.7,
+        headingDeg: 90,
+        headingSource: 'orientation_absolute',
+        headingAccuracyDeg: null,
+        orientation: null,
+        measuredAt: 650,
+      },
     });
     const [url, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
     expect(url).toBe('https://api.test/v1/clients/c1/inputs');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok en');
     const form = init.body as FormData;
-    expect(JSON.parse(form.get('meta') as string)).toMatchObject({ requestId: 'r1', sequence: 1, capturedAt: 1_000_200 });
+    const meta = JSON.parse(form.get('meta') as string);
+    expect(meta).toMatchObject({ requestId: 'r1', sequence: 1, capturedAt: 1_000_200 });
+    // measuredAt is converted to server time like capturedAt: 650 + (1_000_000 - 500)
+    expect(meta.motion).toMatchObject({ speedMps: 0.9, headingDeg: 90, measuredAt: 1_000_150 });
     expect(form.get('audio')).toBeInstanceOf(Blob);
     expect(form.has('frame')).toBe(false);
   });
