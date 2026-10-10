@@ -313,7 +313,7 @@ Which node the camera sees. Called for every evaluated frame, the first one of a
 With `motion`:
 
 - Frames with the camera more than 55° up or down (from `orientation`) are left out, as the map has no such images. With none left the status is `lost`.
-- With `previous` and `previous_step_count`, the distance walked is the new steps (the newest `stepCount` minus `previous_step_count`) times the map's length of a phone step. It replaces the one-edge rule: a node `d` metres from `previous` along the map's edges can be confirmed once the user has walked at least `d` − max(2 m, 0.35 `d`); before that it stays `uncertain`. A missed node no longer stalls the route. A `stepCount` below `previous_step_count` (the phone restarted its count) falls back to the one-edge rule.
+- With `previous` and `previous_step_count`, the distance walked is the new steps (the newest `stepCount` minus `previous_step_count`) times the map's length of a phone step. It replaces the one-edge rule: a node `d` metres from `previous` along the map's edges can be confirmed once the user has walked at least `d` − max(1 m, 0.35 `d`); before that it stays `uncertain`. A missed node no longer stalls the route. A `stepCount` below `previous_step_count` (the phone restarted its count) falls back to the one-edge rule.
 - The newest frame's `headingDeg`, when it has one, is used instead of `heading_deg`.
 - The result adds `walked_m`, `frames_used`, `pitch_deg` (per frame) and, per candidate, `distance_m` and `plausible`.
 
