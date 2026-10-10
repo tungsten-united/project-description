@@ -122,6 +122,7 @@ Text to speech for anything the phone says: the destination prompt, and the `tex
 
 - `text`: URL-encoded, at most 240 characters, otherwise `400 bad_request`.
 - `200`, `Content-Type: audio/mpeg`, chunked. MP3 because Safari and Chrome both play it from a plain `<audio>` element.
+- `X-Speech-Text`: the exact text sent to ElevenLabs, percent-encoded UTF-8 (`decodeURIComponent` reads it). Exposed through CORS, so a `fetch` can read it. A plain `<audio>` element cannot read headers.
 - The orchestrator caches audio by `text` in memory. The sentence templates and the prompt are a small fixed set, so after the first time they cost no ElevenLabs call and no TTS latency.
 - On any non-2xx, or if `<audio>` fails to play, the phone speaks the same text with browser `speechSynthesis` (`output/browserSpeech.ts`). Speech never blocks guidance.
 - Stop: the phone calls `audio.pause()` and clears `src` before `POST /stop`, which also aborts the download.
