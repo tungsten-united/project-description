@@ -96,12 +96,18 @@ export function teeLogger(remote: DebugLogger, store: DebugStore): DebugLogger {
 }
 
 /**
- * Wraps the API so the panel can show what is sent and pause the frame stream.
+ * Wraps the API so the panel can show what is sent, the server's trace entries, and pause the frame stream.
  * The recorded meta is what the phone built, before the HTTP client converts times to server time.
  */
 export function withInspection(api: OrchestratorApi, store: DebugStore): OrchestratorApi {
   return {
     ...api,
+    subscribe(client, onEvent) {
+      return api.subscribe(client, (event) => {
+        if (event.type === 'log') store.log(event.entry.error ? 'error' : 'info', `server ${event.kind}`, JSON.stringify(event.entry));
+        onEvent(event);
+      });
+    },
     sendInput(client, input: UserInput) {
       const { audio, frame, ...meta } = input;
       store.addPayload({

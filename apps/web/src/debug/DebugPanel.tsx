@@ -146,7 +146,7 @@ export function DebugPanel({ store, capture }: Props) {
               <ul className="flex flex-col gap-1 font-mono text-xs">
                 {state.logs.length === 0 && <li className="text-ink-soft">No log lines yet.</li>}
                 {[...state.logs].reverse().map((l) => (
-                  <li key={l.id} className={l.level === 'error' ? 'text-clay-line' : l.level === 'warn' ? 'font-bold' : ''}>
+                  <li key={l.id} className={`break-all ${l.level === 'error' ? 'text-clay-line' : l.level === 'warn' ? 'font-bold' : ''}`}>
                     {time(l.at)} [{l.level}] {l.event}
                     {l.detail ? ` ${l.detail}` : ''}
                   </li>

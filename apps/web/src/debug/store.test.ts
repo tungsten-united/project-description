@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createMockApi } from '../session/mockApi';
-import type { ClientInfo, FrameInput, UserInput } from '../session/types';
+import type { ClientInfo, FrameInput, ServerEvent, UserInput } from '../session/types';
 import { createDebugStore, withInspection } from './store';
 
 const client = {} as ClientInfo;
@@ -26,6 +26,22 @@ describe('debug store and inspection', () => {
     expect(store.get().payloads[0]).toMatchObject({ kind: 'frame', frameBytes: 1 });
     expect(store.get().payloads[0].meta).toMatchObject({ sequence: 1, motion: null });
     vi.unstubAllGlobals();
+  });
+
+  it('shows server trace entries in the logs and still forwards every event', () => {
+    const store = createDebugStore();
+    const api = createMockApi();
+    let push: (e: ServerEvent) => void = () => undefined;
+    vi.spyOn(api, 'subscribe').mockImplementation((_c, onEvent) => {
+      push = onEvent;
+      return () => undefined;
+    });
+    const seen: ServerEvent[] = [];
+    withInspection(api, store).subscribe(client, (e) => seen.push(e));
+    push({ type: 'log', kind: 'frame', entry: { phase: 'navigating', error: 'localize: timeout' } } as unknown as ServerEvent);
+    expect(seen).toHaveLength(1);
+    expect(store.get().logs[0]).toMatchObject({ level: 'error', event: 'server frame' });
+    expect(store.get().logs[0].detail).toContain('"phase":"navigating"');
   });
 
   it('pause holds frames back but never voice inputs', async () => {

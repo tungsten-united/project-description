@@ -497,12 +497,15 @@ No media, tokens or prompts.
 {
   at: number, clientId: string, sessionId: string | null, generation: number, requestId: string,
   kind: "client" | "input" | "frame" | "stop" | "retry",
+  phase: "awaiting_destination" | "navigating" | "arrived" | "stopped",
   clientRouteStepId: string | null, routeStepId: string | null, destinationId: string | null,
   transcript: string | null, command: string | null,
   engine: string, framesSent: number | null, action: Action | null, confidence: number | null, observation: string | null,
   spoke: boolean, text: string | null,
   timingsMs: { upload?: number, stt?: number, command?: number, localize?: number, route?: number, jev?: number, tts?: number, total: number },
   dropped: "stale_generation" | "stale_sequence" | "expired_input" | "superseded" | null,
-  error: string | null
+  error: string | null,
+  localize: object | null, route: object | null, // nav-api's raw localize and route responses, frame entries only
+  quietReason: string | null // why a frame's output was kept quiet: "unchanged", "not_worth_saying", …
 }
 ```
