@@ -68,7 +68,7 @@ Called after the double tap or Start button. No body. No session exists until th
     "maxFrameEdgePx": 1280,
     "maxInputAgeMs": 3000,
     "heartbeatMs": 5000,
-    "navFrames": 5
+    "navFrames": 4
   }
 }
 ```
@@ -101,7 +101,7 @@ The outcome arrives on SSE:
 
 ### `POST /v1/clients/{clientId}/frames`
 
-One camera frame while `navigating`. It joins the current session's buffer of the last `navFrames` (5) frames. `multipart/form-data`:
+One camera frame while `navigating`. It joins the current session's buffer of the last `navFrames` (4) frames. `multipart/form-data`:
 
 | Part | Type | Required |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ One camera frame while `navigating`. It joins the current session's buffer of th
 202 { "requestId": "…", "accepted": true }
 ```
 
-The phone sends the next frame after it gets the 202, so at most one upload is in flight. Only the newest frame triggers an evaluation. If a newer frame arrives before evaluation starts, the older one is not evaluated but stays in the buffer.
+The phone sends the next frame after it gets the 202, so at most one upload is in flight. An evaluation sends `localize` every buffered frame it has not sent before (at most 4), so each frame is scored once and a frame that arrives during a call goes with the next one.
 
 ### `GET /v1/clients/{clientId}/speech?token=…&text=…`
 
@@ -202,7 +202,7 @@ interface Motion {
 }
 ```
 
-The orchestrator passes only `headingDeg` on, as `localize`'s `heading_deg`, from the frame being evaluated. nav-api reports the heading against each reference, without scoring with it. `localize` also accepts each frame's whole `motion` and the step count at the user's last node change (optional, [section 2](#post-mapsmap_idlocalize)): with them it leaves out frames pointed at the floor or ceiling and only confirms a node the user can have walked to. The orchestrator does not send them yet. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
+The orchestrator passes each frame's whole `motion` on to `localize`, with the step count at the user's last node change ([section 2](#post-mapsmap_idlocalize)): nav-api leaves out frames pointed at the floor or ceiling and only counts a node the user can have walked to. The newest frame's `headingDeg` also goes as `heading_deg`; nav-api reports the heading against each reference, without scoring with it. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
 
 ### HTTP errors
 
@@ -284,42 +284,59 @@ The phone ignores any event whose `generation` is older than its current one, an
 
 The navigation engine is [nav-engine](https://github.com/tungsten-united/nav-engine)'s **nav-api**, the read-only live API over the venue's published map: `https://nav-api-613464313064.europe-southwest1.run.app/api/v1` (`NAV_URL`). Every call carries nav-api's token as `Authorization: Bearer $NAV_API_TOKEN`. The map is `NAV_MAP_ID` (`itnig`). A destination's `destinationId` in the route definition is its node id on that map; the orchestrator does not check it, and an unknown id is a 404 from `route`. Formats: `nav/schemas/navigation.py` in nav-engine. Staging can use the fakes in `orient-orchestrator/examples/fakes.rs` instead.
 
-The orchestrator never moves the user by itself: their node comes only from a `confirmed` localization, and nav-api is stateless, so the orchestrator keeps the last confirmed node and confirms arrival itself.
+nav-api is stateless. The orchestrator keeps the navigation state in the session: it locates the user, asks for one route, and follows it one hop at a time. Every call also carries the caller's ids as `X-Client-Id`, `X-Session-Id` and `X-Request-Id` (the frame's `requestId`), so nav-api's log lines join the trace.
+
+### Navigation loop
+
+A session's navigation state: the user's node (the last node reached, kept into the next session) with the phone's `stepCount` when they reached it, the route's hops (none while locating), the current hop, and the votes of the last `NAV_VOTE_N` `localize` calls. Each call sends the frames not sent before, so every vote is over different frames. The worker calls once `NAV_BURST` such frames are waiting.
+
+1. **Locating**, at the start of a session and after lost. `localize` without `expected`; after lost, with the last node as `previous` and its step count as `previous_step_count`, so a node the user can't have walked to yet doesn't count. A result votes for its `best` when its status isn't `lost`, its `margin` is at least `NAV_MARGIN`, and that candidate isn't `plausible: false`. The user is at a node once it has `NAV_VOTE_K` of the last `NAV_VOTE_N` votes, or at once on a `confirmed` result. Then `route` from that node to the destination, once. If the node is the destination, the output is `arrived`; with `found: false`, locating goes on. Until the user is located, the output is `wait` with `uncertain: true`.
+2. **Following** the hop `source → target`. `localize` with `previous` = source, `expected` = target, each frame's `motion` and `previous_step_count`. Each result is one vote:
+   - `at_target`: `best` is the target, `margin` ≥ `NAV_MARGIN`, the status isn't `lost`, and the target isn't `plausible: false`;
+   - `elsewhere`: `best` is neither the source nor the target, `margin` ≥ `NAV_MARGIN`, and the status isn't `lost`;
+   - otherwise no vote.
+
+   With `NAV_VOTE_K` `at_target` votes among the last `NAV_VOTE_N`, the user is at the target: it becomes their node (with the newest `stepCount`) and the next hop starts, or at the destination the output is `arrived`. Only the current hop's target can be reached, so no node is skipped.
+3. **Lost**: `NAV_VOTE_K` `elsewhere` votes among the last `NAV_VOTE_N`, or `NAV_LOST_CALLS` `lost` results in a row while following. The route is dropped and the loop goes back to locating: a new navigation from where the user is.
+
+Live frames score low (Itnig, 2026-10-10: 0.17 to 0.49, against nav-api's confirm score of 0.45), so the votes look at which node leads (`margin`), not at the absolute score. The defaults, `NAV_BURST` 1, `NAV_VOTE_K` 3 of `NAV_VOTE_N` 4, `NAV_MARGIN` 0.04 and `NAV_LOST_CALLS` 10, come from replaying the Itnig walks through the same loop (`nav map orchestrator-replay` in nav-engine). They were the only settings with no wrong move.
 
 ### `POST /maps/{map_id}/localize`
 
-Which node the camera sees. Called for every evaluated frame, the first one of a session included. `multipart/form-data`:
+Which node the camera sees. Called for every evaluation. `multipart/form-data`:
 
-- `images`: the session's last `NAV_FRAMES` (4, nav-api's maximum) frames, oldest first, one `image/jpeg` part each.
-- `previous`: the last confirmed node, when there is one. A jump further than one edge from it stays `uncertain` (with `motion`, see below).
-- `heading_deg`: the evaluated frame's `motion.headingDeg`, when the phone sent one.
-- `motion` (optional): one part per image, in the same order, each that frame's `meta.motion` as JSON (`null` for a frame without one). When any is sent there must be one per image.
-- `previous_step_count` (optional, with `previous` and `motion`): the `stepCount` of the newest frame of the localization that made `previous` the user's node. Re-confirming the same node does not change it. The orchestrator keeps it next to the last confirmed node, with the same lifetime.
+- `images`: the frames not sent before, oldest first, 1 to 4 (nav-api's maximum), one `image/jpeg` part each.
+- `previous`: while following, the hop's source; when relocating, the last node reached. Without `motion`, a node further than one edge from it stays `uncertain`.
+- `expected`: while following, the hop's target. Its score and rank come back as `expected_score` and `expected_rank`.
+- `heading_deg`: the newest frame's `motion.headingDeg`, when the phone sent one.
+- `motion`: one part per image, in the same order, each that frame's `meta.motion` as JSON (`null` for a frame without one). When any is sent there must be one per image.
+- `previous_step_count` (with `previous` and `motion`): the `stepCount` of the newest frame when the user reached `previous`.
 
 ```json
 200 {
-  "map_id": "itnig", "model": "gmberton/MegaLoc:5fe0dd6…", "frames": 4,
-  "status": "confirmed", "reason": "clear: score >= 0.60, margin >= 0.05, next to the last confirmed node",
+  "map_id": "itnig", "model": "gmberton/MegaLoc:5fe0dd6…", "frames": 1,
+  "status": "confirmed", "reason": "clear: score >= 0.45, margin >= 0.05, 3 m walked from the last confirmed node",
   "best": "n4", "margin": 0.08,
-  "candidates": [{ "node": "n4", "name": "Stage corridor", "score": 0.71, "refs": [] }],
-  "previous": "n3", "took_ms": { "embed": 30, "match": 1, "total": 40 }
+  "candidates": [{ "node": "n4", "name": "Stage corridor", "score": 0.51, "refs": [], "distance_m": 0.9, "plausible": true }],
+  "previous": "n3", "expected": "n4", "expected_score": 0.51, "expected_rank": 1, "walked_m": 3.1,
+  "took_ms": { "embed": 30, "match": 1, "total": 40 }
 }
 ```
 
-- `status` is `confirmed`, `uncertain` or `lost`. Only `confirmed` moves the user to `best`. Otherwise the user stays at the last confirmed node. With no confirmed node yet, the output is `wait` with `uncertain: true`.
-- `status` and `reason` go to the trace as `observation`, the best candidate's `score` as `confidence`.
+- `status` is `confirmed`, `uncertain` or `lost`; `best` is the top candidate and `margin` its lead over the second. The [navigation loop](#navigation-loop) turns each result into a vote.
+- The loop's state and the vote (locating or the hop, and the vote counts) go to the trace as `observation`, the best candidate's `score` as `confidence`, and the whole response as `localize`.
 - Timeout 4 s. The first frame after nav-api's inference host restarts can get a 503 while its model loads.
 
 With `motion`:
 
 - Frames with the camera more than 55° up or down (from `orientation`) are left out, as the map has no such images. With none left the status is `lost`.
-- With `previous` and `previous_step_count`, the distance walked is the new steps (the newest `stepCount` minus `previous_step_count`) times the map's length of a phone step. It replaces the one-edge rule: a node `d` metres from `previous` along the map's edges can be confirmed once the user has walked at least `d` − max(1 m, 0.35 `d`); before that it stays `uncertain`. A missed node no longer stalls the route. A `stepCount` below `previous_step_count` (the phone restarted its count) falls back to the one-edge rule.
+- With `previous` and `previous_step_count`, the distance walked is the new steps (the newest `stepCount` minus `previous_step_count`) times the map's length of a phone step. It replaces the one-edge rule: a node `d` metres from `previous` along the map's edges is `plausible` once the user has walked at least `d` − max(1 m, 0.35 `d`); before that it stays `uncertain` and doesn't vote. A `stepCount` below `previous_step_count` (the phone restarted its count) falls back to the one-edge rule.
 - The newest frame's `headingDeg`, when it has one, is used instead of `heading_deg`.
 - The result adds `walked_m`, `frames_used`, `pitch_deg` (per frame) and, per candidate, `distance_m` and `plausible`.
 
 ### `POST /maps/{map_id}/route`
 
-The route from the user's node to the destination. Called after every localization while navigating, unless the user is at the destination, which is `arrived`.
+The route from the user's node to the destination. Called once each time the user is located, at the start of a session and after lost, unless they are at the destination. The orchestrator keeps the hops and follows them in order.
 
 ```json
 { "start": "n1", "goal": "n4", "trust": "observed" }
@@ -339,16 +356,16 @@ The route from the user's node to the destination. Called after every localizati
 }
 ```
 
-Only the first hop is used. It must start at the user's node.
+Each hop becomes an output when it starts:
 
 - `action` is `turn` with `direction` `left`, `right` or `around` when the hop's first step is `turn_left`, `turn_right` or `turn_around`, and `continue` otherwise.
 - `instruction` is spoken instead of the template. When it is longer than 240 characters, it is cut after the last whole sentence that fits; with no such sentence, the template is used.
-- `found: false`, or a first hop that does not start at the user's node, becomes `wait`.
+- `found: false`, or a first hop that does not start at the user's node, keeps locating, with the output `wait`.
 - Timeout 2 s.
 
 A `localize` or `route` failure drops that evaluation. Three in a row in a session send an `error` event with stage `navigate`.
 
-The validated result is an **output**: `{ action, direction, step, next, instruction, uncertain }`, where `step` is the user's node and `next` the hop's target. The worker compares it with the session's previous output, as described in [Worker](#worker-speak-or-stay-quiet).
+The validated result is an **output**: `{ action, direction, step, next, instruction, uncertain }`, where `step` is the user's node and `next` the current hop's target. The worker compares it with the session's previous output, as described in [Worker](#worker-speak-or-stay-quiet).
 
 ## 3. Orchestrator ↔ Jev (TypeSafe)
 
@@ -402,7 +419,7 @@ Runs once per input. The options are each destination ID plus `cancel` and `unsu
 
 ## Worker: speak or stay quiet
 
-One worker per client evaluates the newest frame: `localize` with the session's last 4 frames, then `route` from the user's node, validated into an output. It compares that output with the session's **previous output**:
+One worker per client evaluates the frames not sent yet: one `localize` call, a vote in the [navigation loop](#navigation-loop), and the current hop validated into an output. It compares that output with the session's **previous output**:
 
 ```json
 previous { "action": "continue", "direction": null, "step": "n1", "next": "n2", "instruction": "Go through the glass door …", "uncertain": false }
@@ -413,9 +430,9 @@ output   { "action": "turn", "direction": "left", "step": "n2", "next": "n3", "i
 - There is no previous output (first evaluation in the session): send `guidance`, reason `first`.
 - `arrived`: always send `guidance`.
 - Any field differs: ask Jev whether it is worth saying (below). Send `guidance`, or a `heartbeat` with `quietReason: "not_worth_saying"`. Without `TYPESAFE_API_KEY`, every change is spoken.
-- All fields are equal: send `heartbeat` with `quietReason: "unchanged"`. As a reminder, the same output is spoken again once `REPEAT_MS` (7000) has passed since the last spoken message. An uncertain output is not repeated: "Please hold still" is said once per lost spell.
+- All fields are equal: send `heartbeat` with `quietReason: "unchanged"`. Nothing is repeated on a timer. Asking for the same destination again clears the previous output, so the next output is spoken.
 
-Every output becomes the new previous output, whether it was spoken or not. A new session starts with no previous output, but keeps the user's last confirmed node.
+Every output becomes the new previous output, whether it was spoken or not. A new session starts with no previous output and locates the user again.
 
 ### Speak: one Choice question
 
