@@ -258,7 +258,7 @@ The phone ignores any event whose `generation` is older than its current one, an
   "routeStepId": "corridor",
   "nextRouteStepId": "counter",
   "uncertain": false,
-  "debug": { "engine": "vla:<name>", "timingsMs": { "upload": 180, "navigate": 900, "total": 1100 } }
+  "debug": { "engine": "nav-engine", "timingsMs": { "upload": 180, "localize": 600, "route": 40, "jev": 300, "total": 1150 } }
 }
 ```
 
@@ -282,52 +282,67 @@ The phone ignores any event whose `generation` is older than its current one, an
 
 ## 2. Orchestrator ↔ Navigation engine
 
-Status: no service implements this endpoint yet. Staging uses the fake in `orient-orchestrator/examples/fakes.rs`. [nav-engine](https://github.com/tungsten-united/nav-engine) has the map and the routing and step-tracking reference code it would be built from; see [architecture.md](architecture.md#navigation-engine-nav-engine).
+The navigation engine is [nav-engine](https://github.com/tungsten-united/nav-engine)'s **nav-api**, the read-only live API over the venue's published map: `https://nav-api-613464313064.europe-southwest1.run.app/api/v1` (`NAV_URL`). Every call carries nav-api's token as `Authorization: Bearer $NAV_API_TOKEN`. The map is `NAV_MAP_ID` (`itnig`). A destination's `destinationId` in the route definition is its node id on that map; the orchestrator does not check it, and an unknown id is a 404 from `route`. Formats: `nav/schemas/navigation.py` in nav-engine. Staging can use the fakes in `orient-orchestrator/examples/fakes.rs` instead.
 
-`POST http://<gpu-host>:<port>/v1/navigate`, internal only. Each call carries the session's last `NAV_FRAMES` (5) frames, oldest first. At the start of a session there are fewer, from 1 up to 5. `multipart/form-data`:
+The orchestrator never moves the user by itself: their node comes only from a `confirmed` localization, and nav-api is stateless, so the orchestrator keeps the last confirmed node and confirms arrival itself.
 
-- `meta`: JSON. `frames` lists the images in the same order as the `frames` parts.
+### `POST /maps/{map_id}/localize`
 
-  ```json
-  {
-    "requestId": "…",
-    "sessionId": "…",
-    "destinationId": "counter",
-    "routeStepId": "corridor",
-    "allowedNextStepIds": ["counter"],
-    "stepHint": "Coffee machine on the left, counter ahead.",
-    "frames": [
-      { "requestId": "…", "capturedAt": 1791561600000 },
-      { "requestId": "…", "capturedAt": 1791561600800 }
-    ]
-  }
-  ```
+Which node the camera sees. Called for every evaluated frame, the first one of a session included. `multipart/form-data`:
 
-- `frames`: one `image/jpeg` part per frame, repeated under the same name, oldest first. Images are passed through unchanged.
+- `images`: the session's last `NAV_FRAMES` (4, nav-api's maximum) frames, oldest first, one `image/jpeg` part each.
+- `previous`: the last confirmed node, when there is one. A jump further than one edge from it stays `uncertain`.
 
 ```json
 200 {
-  "action": "turn",
-  "direction": "left",
-  "proposedNextStepId": "counter",
-  "confidence": 0.82,
-  "observation": "coffee machine visible on the left",
-  "modelMs": 870
+  "map_id": "itnig", "model": "megaloc", "frames": 4,
+  "status": "confirmed", "reason": "clear: score >= 0.60, margin >= 0.05, next to the last confirmed node",
+  "best": "n4", "margin": 0.08,
+  "candidates": [{ "node": "n4", "name": "Stage corridor", "score": 0.71, "refs": [] }],
+  "previous": "n3", "took_ms": { "embed": 30, "match": 1, "total": 40 }
 }
 ```
 
-The orchestrator validates every response before using it:
+- `status` is `confirmed`, `uncertain` or `lost`. Only `confirmed` moves the user to `best`. Otherwise the user stays at the last confirmed node. With no confirmed node yet, the output is `wait` with `uncertain: true`.
+- `status` and `reason` go to the trace as `observation`, the best candidate's `score` as `confidence`.
+- Timeout 4 s. The first frame after nav-api's inference host restarts can get a 503 while its model loads.
 
-- If `proposedNextStepId` is not `routeStepId` or one of `allowedNextStepIds`, the step stays where it is and the action becomes `wait`.
-- `confidence` below `MIN_CONFIDENCE` (0.5) becomes `wait` with `uncertain: true`, and the template asks for a clearer view.
-- `observation` goes to the trace only.
-- Timeout 4 s: that evaluation is dropped. Three failures in a row in a session send an `error` event with stage `navigate`.
+### `POST /maps/{map_id}/route`
 
-The validated result is an **output**: `{ action, direction, step, uncertain }`. The worker compares it with the session's previous output, as described in [Worker](#worker-speak-or-stay-quiet).
+The route from the user's node to the destination. Called after every localization while navigating, unless the user is at the destination, which is `arrived`.
+
+```json
+{ "start": "n1", "goal": "n4", "trust": "observed" }
+```
+
+`trust` is `NAV_TRUST`: `verified` (edges a person checked; nav-api's choice for real users), `observed` (walked while mapping, in the walked direction; the default while no edge is verified) or `any`.
+
+```json
+200 {
+  "map_id": "itnig", "start": "n1", "goal": "n4", "trust": "observed", "found": true, "length_m": 9.3,
+  "hops": [
+    { "edge": "e1", "source": "n1", "target": "n2", "forward": true, "length_m": 3.1, "bearing_deg": 12.0,
+      "instruction": "Go through the glass door and walk straight ahead about 3 metres. Bear right …",
+      "steps": [{ "action": "go_through", "distance_m": 1.0, "along": null, "until": null }],
+      "status": "observed" }
+  ]
+}
+```
+
+Only the first hop is used. It must start at the user's node.
+
+- `action` is `turn` with `direction` `left`, `right` or `around` when the hop's first step is `turn_left`, `turn_right` or `turn_around`, and `continue` otherwise.
+- `instruction` is spoken instead of the template. When it is longer than 240 characters, it is cut after the last whole sentence that fits; with no such sentence, the template is used.
+- `found: false`, or a first hop that does not start at the user's node, becomes `wait`.
+- Timeout 2 s.
+
+A `localize` or `route` failure drops that evaluation. Three in a row in a session send an `error` event with stage `navigate`.
+
+The validated result is an **output**: `{ action, direction, step, next, instruction, uncertain }`, where `step` is the user's node and `next` the hop's target. The worker compares it with the session's previous output, as described in [Worker](#worker-speak-or-stay-quiet).
 
 ## 3. Orchestrator ↔ Jev (TypeSafe)
 
-[Jev](https://docs.typesafe.ai/introduction) is TypeSafe's decision model. It takes a `state` and typed questions and returns calibrated answers: Choice, Score or Noul. It does not generate text. So Jev handles the Command step. The worker's speak-or-stay-quiet rule is code, and the sentences are templates.
+[Jev](https://docs.typesafe.ai/introduction) is TypeSafe's decision model. It takes a `state` and typed questions and returns calibrated answers: Choice, Score or Noul. It does not generate text. So Jev handles the Command step and decides whether a changed direction is worth saying. The sentences come from the path or from templates.
 
 `POST https://api.typesafe.ai/v1/systemone` with `Authorization: Bearer $TYPESAFE_API_KEY`. The key lives only in server env. The key and raw audio never go into the trace. TypeSafe returns `401` for a bad key, `422` for a bad request, and `429` or `529` when overloaded. Any failure is handled as described for each call. No call can move route state.
 
@@ -377,23 +392,47 @@ Runs once per input. The options are each destination ID plus `cancel` and `unsu
 
 ## Worker: speak or stay quiet
 
-One worker per client evaluates the newest frame. It calls the navigation engine with the session's last 5 frames, validates the answer into an output, and compares that output with the session's **previous output**:
+One worker per client evaluates the newest frame: `localize` with the session's last 4 frames, then `route` from the user's node, validated into an output. It compares that output with the session's **previous output**:
 
 ```json
-previous { "action": "continue", "direction": null, "step": "corridor", "uncertain": false }
-output   { "action": "turn", "direction": "left", "step": "corridor", "uncertain": false }
-→ speak, reason "changed"
+previous { "action": "continue", "direction": null, "step": "n1", "next": "n2", "instruction": "Go through the glass door …", "uncertain": false }
+output   { "action": "turn", "direction": "left", "step": "n2", "next": "n3", "instruction": "From the drinks cooler, bear left …", "uncertain": false }
+→ changed: ask Jev
 ```
 
 - There is no previous output (first evaluation in the session): send `guidance`, reason `first`.
-- Any field differs: send `guidance` with the template sentence, reason `changed`.
+- `arrived`: always send `guidance`.
+- Any field differs: ask Jev whether it is worth saying (below). Send `guidance`, or a `heartbeat` with `quietReason: "not_worth_saying"`. Without `TYPESAFE_API_KEY`, every change is spoken.
 - All fields are equal: send `heartbeat` with `quietReason: "unchanged"`. As a reminder, the same output is spoken again once `REPEAT_MS` (7000) has passed since the last spoken message.
 
-Every output becomes the new previous output, whether it was spoken or not. A new session starts with no previous output.
+Every output becomes the new previous output, whether it was spoken or not. A new session starts with no previous output, but keeps the user's last confirmed node.
+
+### Speak: one Choice question
+
+```json
+{
+  "model": "jev-latest",
+  "state": {
+    "destination": "coffee counter",
+    "previous": { "action": "continue", "step": "start", "next": "corridor", "…": "…" },
+    "new": { "action": "turn", "direction": "left", "step": "corridor", "next": "counter", "…": "…" },
+    "msSinceLastSpoken": 4200
+  },
+  "questions": {
+    "speak": {
+      "type": "choice",
+      "instructions": "A blind user is being guided indoors by voice. The route planner gave a new direction. Should it be spoken now? …",
+      "criteria": { "speak": "The new direction changes what the user must do now …", "quiet": "The new direction repeats or only rephrases what was last said …" }
+    }
+  }
+}
+```
+
+Only `quiet` with `confidence` of at least `JEV_MIN_CONFIDENCE` keeps it unsaid. Low confidence, an HTTP error or a 2 s timeout speaks it.
 
 ### Sentence templates
 
-Jev does not write sentences, so the orchestrator uses a fixed sentence for each action: "Turn left.", "Keep going straight.", "You have arrived at the coffee counter.", "Wait a moment." or "Please hold still, I need a clearer view." Templates are instant, never fail, and stay within the 240-character limit.
+Jev does not write sentences. The orchestrator speaks the route hop's `instruction` when there is one, and otherwise a fixed sentence for each action: "Turn left.", "Keep going straight.", "You have arrived at the coffee counter.", "Wait a moment." or "Please hold still, I need a clearer view." Templates are instant, never fail, and stay within the 240-character limit.
 
 ## 4. Orchestrator ↔ ElevenLabs
 
@@ -457,11 +496,11 @@ No media, tokens or prompts.
 {
   at: number, clientId: string, sessionId: string | null, generation: number, requestId: string,
   kind: "client" | "input" | "frame" | "stop" | "retry",
-  clientRouteStepId: string | null, routeStepId: string, destinationId: string | null,
+  clientRouteStepId: string | null, routeStepId: string | null, destinationId: string | null,
   transcript: string | null, command: string | null,
   engine: string, framesSent: number | null, action: Action | null, confidence: number | null, observation: string | null,
   spoke: boolean, text: string | null,
-  timingsMs: { upload?: number, stt?: number, command?: number, navigate?: number, tts?: number, total: number },
+  timingsMs: { upload?: number, stt?: number, command?: number, localize?: number, route?: number, jev?: number, tts?: number, total: number },
   dropped: "stale_generation" | "stale_sequence" | "expired_input" | "superseded" | null,
   error: string | null
 }
