@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { createFixtureCapture } from './session/capture';
 import { createMockApi } from './session/mockApi';
-import type { SpeechAdapter } from './session/types';
+import type { ClientInfo, MapChoice, SpeechAdapter } from './session/types';
 
 function fakeSpeech() {
   const spoken: string[] = [];
@@ -160,6 +160,65 @@ describe('first-time help', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
     await screen.findByRole('heading', { name: 'Listening' });
     expect(screen.getByTestId('places-hint')).toHaveTextContent('Say: drinks area · kitchen · stage');
+  });
+});
+
+describe('choosing a place', () => {
+  const MAPS: MapChoice[] = [
+    { mapId: 'itnig', place: 'Itnig' },
+    { mapId: 'glories-basement', place: 'Glories Basement' },
+  ];
+  const GLORIES: ClientInfo['route'] = {
+    routeId: 'glories-basement',
+    destinations: [
+      { destinationId: 'n1', label: 'Main entrance' },
+      { destinationId: 'n4', label: 'Ticket machines' },
+    ],
+  };
+
+  /** The mock orchestrator, with the places to choose from; a client on Glories Basement gets that map's places. */
+  function withPlaces(maps: MapChoice[]) {
+    const api = createMockApi(10);
+    const demoClient = api.createClient.bind(api);
+    const createClient = vi.fn(async (mapId?: string) => {
+      const c = await demoClient();
+      return mapId === 'glories-basement' ? { ...c, route: GLORIES } : c;
+    });
+    return Object.assign(api, { listMaps: () => Promise.resolve(maps), createClient });
+  }
+
+  it('guides in the place chosen, with its places, and remembers the choice', async () => {
+    localStorage.clear();
+    const api = withPlaces(MAPS);
+    render(<App api={api} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    const place = await screen.findByLabelText('Place');
+    expect(place).toHaveValue('itnig'); // the default comes first
+    await userEvent.selectOptions(place, 'glories-basement');
+    await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
+    await screen.findByRole('heading', { name: 'Listening' });
+    expect(api.createClient).toHaveBeenCalledWith('glories-basement');
+    expect(screen.getByTestId('places-hint')).toHaveTextContent('Say: Main entrance · Ticket machines');
+    expect(localStorage.getItem('orient.place')).toBe('glories-basement');
+  });
+
+  it('starts on the default place when the remembered one is no longer published', async () => {
+    localStorage.setItem('orient.place', 'closed-venue');
+    const api = withPlaces(MAPS);
+    render(<App api={api} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    expect(await screen.findByLabelText('Place')).toHaveValue('itnig');
+    await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
+    await screen.findByRole('heading', { name: 'Listening' });
+    expect(api.createClient).toHaveBeenCalledWith('itnig');
+  });
+
+  it('shows no choice with one place', async () => {
+    localStorage.clear();
+    const api = withPlaces([MAPS[0]]);
+    render(<App api={api} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
+    await screen.findByRole('heading', { name: 'Listening' });
+    expect(screen.queryByLabelText('Place')).not.toBeInTheDocument();
+    expect(api.createClient).toHaveBeenCalledWith('itnig');
   });
 });
 

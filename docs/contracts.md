@@ -23,7 +23,7 @@ Two levels of state:
 - `sequence`: integer the phone increments on each input or frame for the client. The server keeps the highest one and drops anything older (latest frame wins).
 - `capturedAt`: epoch milliseconds **in server time**. The phone computes `offset = serverTime - Date.now()` from the client response and adds it, because phone and server clocks drift. Input older than `maxInputAgeMs` is rejected.
 - Auth: `POST /v1/clients` returns a `clientToken`. Send it as `Authorization: Bearer <token>`. `EventSource` cannot set headers, so the SSE URL uses `?token=`. The server redacts it from access logs.
-- Destination IDs are node ids of the venue map, listed in the server's route definition, and route step IDs are the user's node on that map ([section 2](#2-orchestrator--navigation-engine)). The examples below use readable ids such as `corridor` and `counter`; the Itnig map's ids are `n1` to `n10`.
+- A client guides on one published map, the place the phone chose (`mapId`, [`POST /v1/clients`](#post-v1clients)). Destination IDs are that map's node ids, every node by its name, and route step IDs are the user's node on it ([section 2](#2-orchestrator--navigation-engine)). The examples below use readable ids such as `corridor` and `counter`; real maps' ids are `n1`, `n2` and so on.
 
 Shared types:
 
@@ -43,9 +43,24 @@ For S00. No auth.
 200 { "status": "ok", "version": "0.1.0" }
 ```
 
+### `GET /v1/maps`
+
+The places the phone can choose: the maps published on nav-api ([`GET /maps`](#get-maps-and-get-mapsmap_id)), the default map (`NAV_MAP_ID`) first. No auth.
+
+```json
+200 [
+  { "mapId": "itnig", "place": "Itnig" },
+  { "mapId": "glories-basement", "place": "Glories Basement" }
+]
+```
+
+`503 navigation_unavailable` (retryable) when nav-api doesn't answer.
+
 ### `POST /v1/clients`
 
-Called after the double tap or Start button. No body. No session exists until the user says a destination.
+Called after the double tap or Start button. The body is optional: `{ "mapId": "glories-basement" }` picks the place, from [`GET /v1/maps`](#get-v1maps); without it the client guides on `NAV_MAP_ID`. No session exists until the user says a destination.
+
+The destinations are every node of that map, by its name, read from nav-api once, when the client is created. An unknown map is `404 map_not_found`, a malformed `mapId` `400 bad_request`, and nav-api not answering `503 navigation_unavailable` (retryable).
 
 ```json
 201 {
@@ -55,8 +70,7 @@ Called after the double tap or Start button. No body. No session exists until th
   "serverTime": 1791561600000,
   "phase": "awaiting_destination",
   "route": {
-    "routeId": "itnig-demo",
-    "startStepId": "start",
+    "routeId": "itnig",
     "destinations": [
       { "destinationId": "counter", "label": "coffee counter" },
       { "destinationId": "bathroom", "label": "bathroom" }
@@ -75,7 +89,7 @@ Called after the double tap or Start button. No body. No session exists until th
 }
 ```
 
-The phone builds the destination prompt from `destinations[].label` and plays it through [`GET /speech`](#get-v1clientsclientidspeechtokentext).
+`routeId` is the client's map. The phone builds the destination prompt from `destinations[].label` and plays it through [`GET /speech`](#get-v1clientsclientidspeechtokentext).
 
 ### `GET /v1/clients/{clientId}/events?token=…`
 
@@ -284,7 +298,7 @@ The phone ignores any event whose `generation` is older than its current one, an
 
 ## 2. Orchestrator ↔ Navigation engine
 
-The navigation engine is [nav-engine](https://github.com/tungsten-united/nav-engine)'s **nav-api**, the read-only live API over the venue's published map: `https://nav-api-613464313064.europe-southwest1.run.app/api/v1` (`NAV_URL`). Every call carries nav-api's token as `Authorization: Bearer $NAV_API_TOKEN`. The map is `NAV_MAP_ID` (`itnig`). A destination's `destinationId` in the route definition is its node id on that map; the orchestrator does not check it, and an unknown id is a 404 from `route`. Formats: `nav/schemas/navigation.py` in nav-engine. Staging can use the fakes in `orient-orchestrator/examples/fakes.rs` instead.
+The navigation engine is [nav-engine](https://github.com/tungsten-united/nav-engine)'s **nav-api**, the read-only live API over the venue's published map: `https://nav-api-613464313064.europe-southwest1.run.app/api/v1` (`NAV_URL`). Every call carries nav-api's token as `Authorization: Bearer $NAV_API_TOKEN`. The map is the client's (`mapId` at [`POST /v1/clients`](#post-v1clients), default `NAV_MAP_ID`, `itnig`), and its destinations are that map's nodes ([`GET /maps/{map_id}`](#get-maps-and-get-mapsmap_id)). Formats: `nav/schemas/navigation.py` in nav-engine. Staging can use the fakes in `orient-orchestrator/examples/fakes.rs` instead.
 
 nav-api is stateless. The orchestrator keeps the navigation state in the session: it locates the user, asks for one route, and follows it one hop at a time. Every call also carries the caller's ids as `X-Client-Id`, `X-Session-Id` and `X-Request-Id` (the frame's `requestId`), so nav-api's log lines join the trace.
 
@@ -302,6 +316,10 @@ A session's navigation state: the user's node (the last node reached, kept into 
 3. **Lost**: `NAV_VOTE_K` `elsewhere` votes among the last `NAV_VOTE_N`, or, while following, `NAV_LOST_MS` with no result pointing at the hop: each one `lost`, or with a `best` that is neither the source nor the target. Any other result restarts that clock, which runs on the frames' `capturedAt`, so the frame rate doesn't change it. The route is dropped and the loop goes back to locating: a new navigation from where the user is.
 
 Live frames score low (Itnig, 2026-10-10: 0.17 to 0.49, against nav-api's confirm score of 0.45), so the votes look at which node leads (`margin`), not at the absolute score. The defaults, `NAV_BURST` 1, `NAV_VOTE_K` 3 of `NAV_VOTE_N` 4, `NAV_MARGIN` 0.04 and `NAV_LOST_MS` 6000, come from replaying the Itnig walks through the same loop (`nav map orchestrator-replay` in nav-engine). On map build 20261010T111114Z they were the only settings with no wrong move. On build 20261010T131002Z, over its four walks at 1.5 and 3.5 frames a second, with and without motion, the confirmed-only `elsewhere` and the `NAV_LOST_MS` clock were never worse than the rules before them (at 3.5 fps: 8 wrong moves to 7, 9 relocations to 6).
+
+### `GET /maps` and `GET /maps/{map_id}`
+
+`GET /maps` lists the published maps (`map_id`, `place`, counts); the orchestrator passes `map_id` and `place` on as [`GET /v1/maps`](#get-v1maps). `GET /maps/{map_id}` is the published map (`nav/schemas/map.py`, `PlaceMap`); the orchestrator reads `map_id` and each node's `id` and `name`, once per client. An unknown map is a 404. Timeout 5 s.
 
 ### `POST /maps/{map_id}/localize`
 
@@ -381,7 +399,7 @@ The phone always sends audio, and Jev takes text or JSON state, not audio. So th
 
 ### Command: one Choice question
 
-Runs once per input. The options are each destination ID plus `cancel` and `unsupported`. The option descriptions are built from the route definition.
+Runs once per input. The options are each destination ID plus `cancel` and `unsupported`. Each destination's description is its name on the map.
 
 ```json
 {
@@ -392,8 +410,8 @@ Runs once per input. The options are each destination ID plus `cancel` and `unsu
       "type": "choice",
       "instructions": "What is the blind user asking for in this spoken request? They are being guided indoors and can only be taken to the listed places.",
       "criteria": {
-        "counter": "Wants to go to the coffee counter, for example: coffee, counter, bar.",
-        "bathroom": "Wants to go to the bathroom, for example: bathroom, toilet, restroom, wc.",
+        "counter": "Wants to go to the coffee counter.",
+        "bathroom": "Wants to go to the bathroom.",
         "cancel": "Wants to stop, cancel or end the guidance.",
         "unsupported": "Wants something else: another place, a question, or nothing clear."
       }
@@ -417,7 +435,7 @@ Runs once per input. The options are each destination ID plus `cancel` and `unsu
 - A destination ID that differs from the current session's destination starts a new session. The same destination keeps the current session. After Stop or arrival, any destination starts a new session.
 - `confidence` below `JEV_MIN_CONFIDENCE` (0.5) sends `needs_input` with `reason: "unclear"`. A low-confidence answer is never acted on.
 - An HTTP error, an unknown `choice`, or a timeout after 3 s also sends `needs_input` with `reason: "unclear"`.
-- With no `TYPESAFE_API_KEY` set, the orchestrator matches keywords from the route aliases instead. This is for local development.
+- With no `TYPESAFE_API_KEY` set, the orchestrator matches the destinations' names in the transcript instead. This is for local development.
 
 ## Worker: speak or stay quiet
 
@@ -485,6 +503,7 @@ One vendor and one key for both directions. `ELEVENLABS_API_KEY` lives only in s
 | `file` | The phone's `audio` part as received, `audio/webm` or `audio/mp4`. Scribe accepts both, so no transcoding. |
 | `language_code` | `$SPEECH_LANGUAGE` |
 | `tag_audio_events` | `false` |
+| `keyterms` | One per destination: its name, so Scribe spells the map's places right |
 
 ```json
 200 { "language_code": "en", "language_probability": 0.98, "text": "take me to the coffee", "words": [ … ] }

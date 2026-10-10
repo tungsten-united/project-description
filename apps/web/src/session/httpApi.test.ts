@@ -8,7 +8,7 @@ const client: ClientInfo = {
   generation: 1,
   serverTime: 1_000_000,
   phase: 'awaiting_destination',
-  route: { routeId: 'r', startStepId: 'start', destinations: [] },
+  route: { routeId: 'r', destinations: [] },
   limits: { maxAudioMs: 1, maxAudioBytes: 1, maxFrameBytes: 1, maxFrameEdgePx: 1, maxInputAgeMs: 1, heartbeatMs: 1, navFrames: 5 },
 };
 
@@ -54,6 +54,25 @@ describe('http api', () => {
     expect(meta.motion).toMatchObject({ speedMps: 0.9, headingDeg: 90, measuredAt: 1_000_150 });
     expect(form.get('audio')).toBeInstanceOf(Blob);
     expect(form.has('frame')).toBe(false);
+  });
+
+  it('lists the places, and creates a client on the chosen one or the default', async () => {
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async (url) =>
+      url.endsWith('/maps')
+        ? new Response(JSON.stringify([{ mapId: 'itnig', place: 'Itnig' }]))
+        : new Response(JSON.stringify(client), { status: 201 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createHttpApi('https://api.test');
+    expect(await api.listMaps?.()).toEqual([{ mapId: 'itnig', place: 'Itnig' }]);
+    await api.createClient('glories-basement');
+    await api.createClient();
+    const [url, chosen] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(url).toBe('https://api.test/v1/clients');
+    expect(chosen.body).toBe('{"mapId":"glories-basement"}');
+    expect((chosen.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    const [, plain] = fetchMock.mock.calls[2] as unknown as [string, RequestInit];
+    expect(plain.body).toBeUndefined();
   });
 
   it('turns the contract error body into an ApiError', async () => {
