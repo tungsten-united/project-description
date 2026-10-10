@@ -202,7 +202,7 @@ interface Motion {
 }
 ```
 
-Nothing on the navigation side uses it yet: the orchestrator ignores the field, and nav-api's `localize` takes no motion data, only an optional compass heading (`heading_deg`), which the orchestrator does not send. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
+The orchestrator passes only `headingDeg` on, as `localize`'s `heading_deg`, from the frame being evaluated; nav-api takes no other motion data and only reports the heading against each reference, without scoring with it. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
 
 ### HTTP errors
 
@@ -292,6 +292,7 @@ Which node the camera sees. Called for every evaluated frame, the first one of a
 
 - `images`: the session's last `NAV_FRAMES` (4, nav-api's maximum) frames, oldest first, one `image/jpeg` part each.
 - `previous`: the last confirmed node, when there is one. A jump further than one edge from it stays `uncertain`.
+- `heading_deg`: the evaluated frame's `motion.headingDeg`, when the phone sent one.
 
 ```json
 200 {
@@ -403,7 +404,7 @@ output   { "action": "turn", "direction": "left", "step": "n2", "next": "n3", "i
 - There is no previous output (first evaluation in the session): send `guidance`, reason `first`.
 - `arrived`: always send `guidance`.
 - Any field differs: ask Jev whether it is worth saying (below). Send `guidance`, or a `heartbeat` with `quietReason: "not_worth_saying"`. Without `TYPESAFE_API_KEY`, every change is spoken.
-- All fields are equal: send `heartbeat` with `quietReason: "unchanged"`. As a reminder, the same output is spoken again once `REPEAT_MS` (7000) has passed since the last spoken message.
+- All fields are equal: send `heartbeat` with `quietReason: "unchanged"`. As a reminder, the same output is spoken again once `REPEAT_MS` (7000) has passed since the last spoken message. An uncertain output is not repeated: "Please hold still" is said once per lost spell.
 
 Every output becomes the new previous output, whether it was spoken or not. A new session starts with no previous output, but keeps the user's last confirmed node.
 
