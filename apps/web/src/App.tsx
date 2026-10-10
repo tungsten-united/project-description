@@ -3,6 +3,9 @@ import { createBrowserSpeech } from './output/browserSpeech';
 import { createLiveRegionSpeech } from './output/liveRegionSpeech';
 import { createServerSpeech } from './output/serverSpeech';
 import { createBrowserCapture, createFixtureCapture } from './session/capture';
+import { DebugPanel } from './debug/DebugPanel';
+import { createDebugStore, teeLogger, withInspection } from './debug/store';
+import { createMotionTracker, noMotion } from './motion/tracker';
 import { createDebugLogger, noopLogger } from './session/debugLog';
 import { createHttpApi } from './session/httpApi';
 import { createMockApi } from './session/mockApi';
@@ -64,12 +67,18 @@ interface AppProps {
 }
 
 export function App({ api, speech, capture }: AppProps) {
-  const resolvedApi = useMemo(() => api ?? defaultApi(), [api]);
+  // DEBUG_MODE is a build variable (VITE_DEBUG_MODE=true). It adds a cog with camera, logs, motion and payloads.
+  const debugStore = useMemo(() => (import.meta.env.VITE_DEBUG_MODE === 'true' ? createDebugStore() : null), []);
+  const baseApi = useMemo(() => api ?? defaultApi(), [api]);
+  const resolvedApi = useMemo(() => (debugStore ? withInspection(baseApi, debugStore) : baseApi), [baseApi, debugStore]);
   // Debug batches go to the orchestrator, which prints them into Cloud Logging. Off in demo mode.
   const logger = useMemo(() => {
     const base = import.meta.env.VITE_API_BASE_URL;
-    return base ? createDebugLogger(base) : noopLogger;
-  }, []);
+    const remote = base ? createDebugLogger(base) : noopLogger;
+    return debugStore ? teeLogger(remote, debugStore) : remote;
+  }, [debugStore]);
+  // Motion sensors only matter when there is a backend to send them to.
+  const motion = useMemo(() => (import.meta.env.VITE_API_BASE_URL ? createMotionTracker() : noMotion), []);
   // Default: the app's own voice is the only voice. Opt-in: the user's screen reader reads the text.
   const [screenReaderSpeech, setScreenReaderSpeech] = useState(readPreference);
   const [announcement, setAnnouncement] = useState('');
@@ -84,7 +93,17 @@ export function App({ api, speech, capture }: AppProps) {
     () => capture ?? (import.meta.env.VITE_API_BASE_URL ? createBrowserCapture() : createFixtureCapture()),
     [capture],
   );
-  const { view, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture, logger);
+  const { view, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture, {
+    logger,
+    motion,
+  });
+
+  // Keeps the panel's motion tab live while debugging.
+  useEffect(() => {
+    if (!debugStore) return;
+    const timer = setInterval(() => debugStore.setMotion(motion.snapshot()), 500);
+    return () => clearInterval(timer);
+  }, [debugStore, motion]);
 
   const running = isRunning(view.state);
   const { label, caption } = copyFor(view);
@@ -106,7 +125,9 @@ export function App({ api, speech, capture }: AppProps) {
         if (!running) void start();
       }}
     >
-      <header className="flex items-center justify-between text-base text-ink-soft">
+      {debugStore && <DebugPanel store={debugStore} capture={resolvedCapture} />}
+
+      <header className="flex items-center justify-between pr-14 text-base text-ink-soft">
         <span className="tracking-wide">Orient</span>
         {!import.meta.env.VITE_API_BASE_URL && <span>Demo mode</span>}
       </header>

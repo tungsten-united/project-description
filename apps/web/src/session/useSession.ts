@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { noMotion, type MotionSource } from '../motion/tracker';
 import { noopLogger, type DebugLogger } from './debugLog';
 import { initialView, reduce, type MachineEvent, type ViewState } from './machine';
 import {
@@ -35,11 +36,17 @@ function describeEnvironment(): string {
   return `ua=${navigator.userAgent} secure=${String(window.isSecureContext)} standalone=${String(standalone)} viewport=${window.innerWidth}x${window.innerHeight}`;
 }
 
+interface SessionOptions {
+  logger?: DebugLogger;
+  /** Speed and heading sensors. Defaults to none, so `motion` is null in every request. */
+  motion?: MotionSource;
+}
+
 export function useSession(
   api: OrchestratorApi,
   speech: SpeechAdapter,
   capture: Capture,
-  logger: DebugLogger = noopLogger,
+  { logger = noopLogger, motion = noMotion }: SessionOptions = {},
 ) {
   const viewRef = useRef<ViewState>(initialView);
   const [view, setView] = useState<ViewState>(initialView);
@@ -70,6 +77,7 @@ export function useSession(
       speech.stop();
       speech.setSource?.(null);
       capture.release();
+      motion.stop();
       r.unsubscribe?.();
       r.unsubscribe = null;
       setNavigating(false);
@@ -82,7 +90,7 @@ export function useSession(
       logger.flush();
       logger.setClientId(null);
     },
-    [api, capture, logger, send, speech],
+    [api, capture, logger, motion, send, speech],
   );
 
   const onEvent = useCallback(
@@ -149,8 +157,10 @@ export function useSession(
     speech.initializeAfterUserGesture();
     send({ type: 'start' });
     logger.log('info', 'start', describeEnvironment());
+    // Both permission prompts are started inside the tap. Denied motion only means motion is null.
+    const motionAccess = motion.start().catch(() => 'denied' as const);
     try {
-      await capture.acquire(); // inside the tap, so the browser will show its permission prompt
+      await capture.acquire();
     } catch (e) {
       if (id === r.id) {
         const denied = e instanceof CaptureError && e.code === 'permission_denied';
@@ -159,8 +169,10 @@ export function useSession(
       }
       return;
     }
+    logger.log('info', 'motion_access', await motionAccess);
     if (id !== r.id) {
       capture.release();
+      motion.stop();
       return;
     }
     let client: ClientInfo;
@@ -186,7 +198,7 @@ export function useSession(
     send({ type: 'prompt_started', text: prompt });
     await speech.speak(prompt); // a failed prompt still shows as text, so continue
     if (id === r.id) send({ type: 'prompt_done' });
-  }, [api, capture, halt, logger, onEvent, send, speech]);
+  }, [api, capture, halt, logger, motion, onEvent, send, speech]);
 
   const finishRecording = useCallback(async () => {
     const r = run.current;
@@ -204,6 +216,7 @@ export function useSession(
       return;
     }
     r.sequence += 1;
+    logger.log('info', 'input_sent', `audio=${audio.size}B ${audio.type} frame=${frame?.size ?? 0}B`);
     try {
       await api.sendInput(client, {
         requestId: crypto.randomUUID(),
@@ -212,11 +225,12 @@ export function useSession(
         capturedAt,
         audio,
         frame,
+        motion: motion.snapshot(),
       });
     } catch (e) {
       if (id === r.id) halt('error', UNAVAILABLE_TEXT, `send_input: ${String(e)}`);
     }
-  }, [api, capture, halt, send, speech]);
+  }, [api, capture, halt, logger, motion, send, speech]);
 
   // Bounded recording: starts when listening begins and ends by itself.
   const listening = view.state === 'listening';
@@ -251,6 +265,7 @@ export function useSession(
               capturedAt,
               frame,
               clientRouteStepId: r.routeStepId,
+              motion: motion.snapshot(),
             })
             .catch(() => undefined); // 409s resync through events; a dead stream trips the watchdog
         }
@@ -260,7 +275,7 @@ export function useSession(
     return () => {
       cancelled = true;
     };
-  }, [streaming, api, capture]);
+  }, [streaming, api, capture, motion]);
 
   // Connection watchdog: no event for 3 x heartbeatMs means the stream is lost.
   const running = view.state !== 'idle' && view.state !== 'stopped';
@@ -281,9 +296,10 @@ export function useSession(
       r.id += 1;
       speech.stop();
       capture.release();
+      motion.stop();
       r.unsubscribe?.();
     };
-  }, [speech, capture]);
+  }, [speech, capture, motion]);
 
   return useMemo(
     () => ({ view, start, stop: () => halt('user_stop'), finishRecording: () => void finishRecording() }),

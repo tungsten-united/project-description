@@ -184,6 +184,26 @@ Debug lines from the phone, for Cloud Logging. No token, because the failures wo
 - `204` on success. The phone ignores every failure, and an orchestrator without this route is fine.
 - The phone sends `Content-Type: text/plain` so the request is "simple" (no CORS preflight), which also lets `sendBeacon` deliver the last batch on page hide. The body is still JSON.
 
+### Motion (proposed, pending team review)
+
+An optional `motion` field in the `meta` JSON of `POST /inputs` and `POST /frames`, so the navigation engine knows how the phone is moving. `null` when the sensors are denied or unsupported. The phone estimates it with the same step detector and camera-heading formula as the nav-engine recorder (`frontend/app.js`, `STEP` constants and `cameraHeading`).
+
+```ts
+interface Motion {
+  speedMps: number | null;        // steps in the last 4 s / 4 x stepLengthM. null until 3 steps seen, 0 standing
+  cadenceHz: number;              // steps per second over the same window
+  stepCount: number;              // since Start
+  stepLengthM: number;            // 0.7 by default
+  headingDeg: number | null;      // rear-camera axis, degrees clockwise from north
+  headingSource: "compass_ios" | "orientation_absolute" | null;
+  headingAccuracyDeg: number | null;   // iOS webkitCompassAccuracy
+  orientation: { alpha: number; beta: number; gamma: number; absolute: boolean } | null;
+  measuredAt: number;             // newest sensor sample, server time like capturedAt
+}
+```
+
+The orchestrator copies it onto each frame it forwards in `POST /v1/navigate`: `meta.frames[i]` becomes `{ requestId, capturedAt, motion }`. Existing orchestrators ignore the extra field. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
+
 ### HTTP errors
 
 All non-2xx responses use the same body:

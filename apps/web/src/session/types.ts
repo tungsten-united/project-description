@@ -6,6 +6,22 @@ export type Phase = 'awaiting_destination' | 'navigating' | 'arrived' | 'stopped
 export type TraceKind = 'client' | 'input' | 'frame' | 'stop' | 'retry';
 export type StopReason = 'user_stop' | 'voice_cancel' | 'arrived' | 'error';
 
+/** Sensor-derived motion when a frame or recording was captured. See the motion payload proposal. */
+export interface Motion {
+  /** m/s: steps in the last 4 s / 4 x stepLengthM. null until 3 steps were seen, 0 when standing. */
+  speedMps: number | null;
+  cadenceHz: number;
+  stepCount: number;
+  stepLengthM: number;
+  /** Rear-camera axis, degrees clockwise from north. null if unknown. */
+  headingDeg: number | null;
+  headingSource: 'compass_ios' | 'orientation_absolute' | null;
+  headingAccuracyDeg: number | null;
+  orientation: { alpha: number; beta: number; gamma: number; absolute: boolean } | null;
+  /** Local Date.now() of the newest sensor sample. The HTTP client converts it to server time. */
+  measuredAt: number;
+}
+
 export interface Limits {
   maxAudioMs: number;
   maxAudioBytes: number;
@@ -69,6 +85,7 @@ export interface UserInput {
   capturedAt: number;
   audio: Blob;
   frame: Blob | null;
+  motion: Motion | null;
 }
 
 export interface FrameInput {
@@ -78,6 +95,7 @@ export interface FrameInput {
   capturedAt: number;
   frame: Blob;
   clientRouteStepId: string | null;
+  motion: Motion | null;
 }
 
 /** The phone's only view of the orchestrator. Implemented by the mock and by the HTTP client. */
@@ -117,6 +135,8 @@ export class CaptureError extends Error {
 /** Microphone and camera. Phone browsers only grant them after a tap, so acquire() runs inside Start. */
 export interface Capture {
   acquire(): Promise<void>;
+  /** The live camera stream, for the debug panel. null when there is no camera. */
+  previewStream(): MediaStream | null;
   startRecording(): void;
   stopRecording(): Promise<Blob | null>;
   grabFrame(): Promise<Blob | null>;

@@ -65,6 +65,8 @@ export function createBrowserCapture({ maxEdge = 1280, quality = 0.7 }: Options 
       await video.play().catch(() => undefined);
     },
 
+    previewStream: () => stream,
+
     startRecording() {
       if (!stream) return;
       const audioOnly = new MediaStream(stream.getAudioTracks());
@@ -117,6 +119,7 @@ export function createFixtureCapture(): Capture {
   const blob = (type: string) => new Blob([new Uint8Array([0])], { type });
   return {
     async acquire() {},
+    previewStream: () => null,
     startRecording() {},
     stopRecording: () => Promise.resolve(blob('audio/webm')),
     grabFrame: () => Promise.resolve(blob('image/jpeg')),

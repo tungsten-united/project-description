@@ -128,6 +128,7 @@ npm test -w apps/web -- -t "late events"              # tests whose name matches
 - Desktop: `npm run dev -w apps/web`, then Chrome DevTools device mode (Cmd+Shift+M).
 - Phone: https://orient.harshdeepsingh.dev, built without `VITE_API_BASE_URL`, so demo mode. Phones only allow camera and microphone over HTTPS, so a LAN `http://` dev server is not a real test.
 - Orchestrator without a phone: in `orient-orchestrator`, `cargo run --example fakes`, then `STT_URL=http://localhost:8001/stt DEBUG_PAGE=1 cargo run` and open http://localhost:8000/debug.
+- Debug mode: build with `VITE_DEBUG_MODE=true` (a repo variable for the Cloudflare build) to get a cog that opens camera feed, logs, motion data and the exact payloads sent. Pause stops frame uploads so a payload, including its audio clip, can be inspected.
 - Staging: released by hand from **Actions > Deploy staging** in `orient-orchestrator`, which creates `orient-orchestrator-staging` on Cloud Run (`<url>/debug`, `/v1/health`). To point the app at it, set `VITE_API_BASE_URL` in `apps/web/.env.local`, or as the repo variable for the Cloudflare build.
 - Phone to orchestrator end to end needs the web app drift below fixed first.
 
