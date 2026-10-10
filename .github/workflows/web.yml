@@ -82,3 +82,80 @@ jobs:
       - run: npx wrangler deploy
         if: steps.creds.outputs.ready == 'true'
         working-directory: apps/web
+
+  # The same build on Google Cloud Run, for phones on networks where Cloudflare is unreachable
+  # (Spanish ISPs block Cloudflare addresses during football matches). It does not replace the
+  # Cloudflare deploy: both run on every merge to main.
+  deploy-gcp:
+    name: Deploy to Google Cloud Run
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      RUNTIME_SA: ${{ vars.GCP_RUNTIME_SA }}
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/orient/orient-web:${{ github.sha }}
+    steps:
+      - name: Check Google Cloud variables
+        id: gcp
+        env:
+          PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOYER: ${{ vars.GCP_DEPLOYER_SA }}
+        run: |
+          missing=""
+          for v in REGION PROJECT RUNTIME_SA PROVIDER DEPLOYER; do [ -n "${!v}" ] || missing="$missing $v"; done
+          if [ -n "$missing" ]; then
+            echo "::warning::Missing Google Cloud variables:$missing. Skipping the Cloud Run deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.gcp.outputs.ready == 'true'
+      - uses: actions/setup-node@v7
+        if: steps.gcp.outputs.ready == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        if: steps.gcp.outputs.ready == 'true'
+      - run: npm run build
+        if: steps.gcp.outputs.ready == 'true'
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_DEBUG_MODE: ${{ vars.VITE_DEBUG_MODE }}
+          VITE_VOICE_ISOLATION: ${{ vars.VITE_VOICE_ISOLATION }}
+      - uses: google-github-actions/auth@v3
+        if: steps.gcp.outputs.ready == 'true'
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v3
+        if: steps.gcp.outputs.ready == 'true'
+      - name: Build and push the image
+        if: steps.gcp.outputs.ready == 'true'
+        run: |
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build -f deploy/web/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+      - name: Deploy
+        if: steps.gcp.outputs.ready == 'true'
+        run: |
+          gcloud run deploy orient-web --project "$PROJECT" --region "$REGION" --image "$IMAGE" \
+            --service-account "$RUNTIME_SA" --allow-unauthenticated --port 8080 \
+            --cpu 1 --memory 256Mi --min-instances 1 --max-instances 3 --quiet
+      - name: Smoke test
+        if: steps.gcp.outputs.ready == 'true'
+        run: |
+          URL=$(gcloud run services describe orient-web --project "$PROJECT" --region "$REGION" --format 'value(status.url)')
+          for path in / /itnig-demo /manifest.webmanifest; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$URL$path")
+            echo "$URL$path -> $code"
+            [ "$code" = "200" ] || exit 1
+          done
+          echo "Web on Cloud Run: $URL" >> "$GITHUB_STEP_SUMMARY"
