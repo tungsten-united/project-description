@@ -193,8 +193,8 @@ export function useSession(
     r.lastEventAt = Date.now();
     speech.setSource?.((text) => api.speechUrl(client, text));
     r.unsubscribe = api.subscribe(client, (e) => void onEvent(id, e));
-    const labels = client.route.destinations.map((d) => d.label).join(' or ');
-    const prompt = `Where would you like to go? You can say ${labels}.`;
+    // The open question only. The server's route decides what it can guide to, and says so if it cannot.
+    const prompt = 'Where would you like to go?';
     send({ type: 'prompt_started', text: prompt });
     await speech.speak(prompt); // a failed prompt still shows as text, so continue
     if (id === r.id) send({ type: 'prompt_done' });
