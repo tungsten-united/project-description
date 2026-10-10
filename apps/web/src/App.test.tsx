@@ -35,7 +35,7 @@ describe('App', () => {
     const speech = fakeSpeech();
     render(<App api={createMockApi(5)} speech={speech} capture={createFixtureCapture()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Finish recording' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Arrived' })).toBeInTheDocument());
     expect(speech.spoken.at(-1)).toBe('You have arrived at the coffee counter.');
   });
@@ -44,7 +44,7 @@ describe('App', () => {
     const speech = fakeSpeech();
     render(<App api={createMockApi(30)} speech={speech} capture={createFixtureCapture()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Finish recording' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
     await userEvent.click(screen.getByRole('button', { name: 'Stop guidance' }));
     expect(screen.getByRole('heading', { name: 'Stopped' })).toBeInTheDocument();
     expect(speech.stopSpy).toHaveBeenCalled();
@@ -63,4 +63,28 @@ describe('App', () => {
     await userEvent.dblClick(screen.getByRole('main'));
     expect(screen.getByRole('heading', { name: 'Listening' })).toBeInTheDocument();
   });
+});
+
+describe('speech modes', () => {
+  it('keeps the status region quiet while a session runs and announces the outcome after Stop', async () => {
+    render(<App api={createMockApi(30)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
+    await screen.findByRole('heading', { name: 'Listening' });
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    await userEvent.click(screen.getByRole('button', { name: 'Stop guidance' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Stopped');
+    expect(screen.getByRole('button', { name: 'Start guidance' })).toHaveFocus();
+  });
+
+  it('opt-in mode puts guidance text in a live region and plays no app audio', async () => {
+    const speech = fakeSpeech();
+    render(<App api={createMockApi(5)} speech={speech} capture={createFixtureCapture()} />);
+    await userEvent.click(screen.getByRole('switch', { name: /screen reader/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Start guidance' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Done' }, { timeout: 9000 }));
+    await waitFor(() => expect(document.querySelector('[aria-live="assertive"]')).toHaveTextContent(/\S/), {
+      timeout: 5000,
+    });
+    expect(speech.spoken).toEqual([]);
+  }, 20000);
 });
