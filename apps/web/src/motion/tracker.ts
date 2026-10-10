@@ -1,8 +1,8 @@
 import type { Motion } from '../session/types';
 
 /**
- * Ported from the nav-engine recorder (frontend/app.js, main at 73dfa7a): the same step detector,
- * the same constants and the same camera-heading formula, so live and recorded walks agree.
+ * Ported from the nav-engine recorder (frontend/app.js, main at 73dfa7a), which now lives here as /map
+ * (mapping/recorder.ts uses this detector and heading), so live and recorded walks agree.
  * The live speed is a 4 s window average. The recorder calls it "display only"; the better
  * estimate there is computed offline with zero-phase filters that cannot run live.
  */

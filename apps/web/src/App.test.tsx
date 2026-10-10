@@ -56,6 +56,14 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Stopped' })).toBeInTheDocument();
   });
 
+  it('links to map creation from a small header link, without starting on double tap', async () => {
+    render(<App api={createMockApi(10)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
+    const link = screen.getByRole('link', { name: 'Map a place' });
+    expect(link).toHaveAttribute('href', '/map');
+    await userEvent.dblClick(link);
+    expect(screen.getByRole('heading', { name: 'Ready' })).toBeInTheDocument();
+  });
+
   it('double tap starts but never stops', async () => {
     render(<App api={createMockApi(10)} speech={fakeSpeech()} capture={createFixtureCapture()} />);
     await userEvent.dblClick(screen.getByRole('main'));
