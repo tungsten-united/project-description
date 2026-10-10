@@ -202,7 +202,7 @@ interface Motion {
 }
 ```
 
-The orchestrator passes only `headingDeg` on, as `localize`'s `heading_deg`, from the frame being evaluated; nav-api takes no other motion data and only reports the heading against each reference, without scoring with it. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
+The orchestrator passes only `headingDeg` on, as `localize`'s `heading_deg`, from the frame being evaluated. nav-api reports the heading against each reference, without scoring with it. `localize` also accepts each frame's whole `motion` and the step count at the user's last node change (optional, [section 2](#post-mapsmap_idlocalize)): with them it leaves out frames pointed at the floor or ceiling and only confirms a node the user can have walked to. The orchestrator does not send them yet. The live speed is a 4 s window average and reports nothing before 3 steps. The indoor compass is noisy, which is why the raw angles are included.
 
 ### HTTP errors
 
@@ -291,8 +291,10 @@ The orchestrator never moves the user by itself: their node comes only from a `c
 Which node the camera sees. Called for every evaluated frame, the first one of a session included. `multipart/form-data`:
 
 - `images`: the session's last `NAV_FRAMES` (4, nav-api's maximum) frames, oldest first, one `image/jpeg` part each.
-- `previous`: the last confirmed node, when there is one. A jump further than one edge from it stays `uncertain`.
+- `previous`: the last confirmed node, when there is one. A jump further than one edge from it stays `uncertain` (with `motion`, see below).
 - `heading_deg`: the evaluated frame's `motion.headingDeg`, when the phone sent one.
+- `motion` (optional): one part per image, in the same order, each that frame's `meta.motion` as JSON (`null` for a frame without one). When any is sent there must be one per image.
+- `previous_step_count` (optional, with `previous` and `motion`): the `stepCount` of the newest frame of the localization that made `previous` the user's node. Re-confirming the same node does not change it. The orchestrator keeps it next to the last confirmed node, with the same lifetime.
 
 ```json
 200 {
@@ -307,6 +309,13 @@ Which node the camera sees. Called for every evaluated frame, the first one of a
 - `status` is `confirmed`, `uncertain` or `lost`. Only `confirmed` moves the user to `best`. Otherwise the user stays at the last confirmed node. With no confirmed node yet, the output is `wait` with `uncertain: true`.
 - `status` and `reason` go to the trace as `observation`, the best candidate's `score` as `confidence`.
 - Timeout 4 s. The first frame after nav-api's inference host restarts can get a 503 while its model loads.
+
+With `motion`:
+
+- Frames with the camera more than 55° up or down (from `orientation`) are left out, as the map has no such images. With none left the status is `lost`.
+- With `previous` and `previous_step_count`, the distance walked is the new steps (the newest `stepCount` minus `previous_step_count`) times the map's length of a phone step. It replaces the one-edge rule: a node `d` metres from `previous` along the map's edges can be confirmed once the user has walked at least `d` − max(1 m, 0.35 `d`); before that it stays `uncertain`. A missed node no longer stalls the route. A `stepCount` below `previous_step_count` (the phone restarted its count) falls back to the one-edge rule.
+- The newest frame's `headingDeg`, when it has one, is used instead of `heading_deg`.
+- The result adds `walked_m`, `frames_used`, `pitch_deg` (per frame) and, per candidate, `distance_m` and `plausible`.
 
 ### `POST /maps/{map_id}/route`
 
