@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
 import { createBrowserSpeech } from './output/browserSpeech';
+import { createServerSpeech } from './output/serverSpeech';
+import { createBrowserCapture, createFixtureCapture } from './session/capture';
 import { createHttpApi } from './session/httpApi';
 import { createMockApi } from './session/mockApi';
 import { isRunning, type ViewState } from './session/machine';
-import type { OrchestratorApi, SpeechAdapter } from './session/types';
+import type { Capture, OrchestratorApi, SpeechAdapter } from './session/types';
 import { useSession } from './session/useSession';
 
 interface Copy {
@@ -38,12 +40,18 @@ function defaultApi(): OrchestratorApi {
 interface AppProps {
   api?: OrchestratorApi;
   speech?: SpeechAdapter;
+  capture?: Capture;
 }
 
-export function App({ api, speech }: AppProps) {
+export function App({ api, speech, capture }: AppProps) {
   const resolvedApi = useMemo(() => api ?? defaultApi(), [api]);
-  const resolvedSpeech = useMemo(() => speech ?? createBrowserSpeech(), [speech]);
-  const { view, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech);
+  const resolvedSpeech = useMemo(() => speech ?? createServerSpeech(createBrowserSpeech()), [speech]);
+  // Demo mode has no backend to receive media, so it skips the permission prompts.
+  const resolvedCapture = useMemo(
+    () => capture ?? (import.meta.env.VITE_API_BASE_URL ? createBrowserCapture() : createFixtureCapture()),
+    [capture],
+  );
+  const { view, start, stop, finishRecording } = useSession(resolvedApi, resolvedSpeech, resolvedCapture);
 
   const running = isRunning(view.state);
   const { label, caption } = copyFor(view);
