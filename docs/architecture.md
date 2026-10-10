@@ -38,7 +38,7 @@ flowchart LR
     ttsapi["Text to speech<br/>ElevenLabs Flash v2.5, cached by text"]
     cmd["Jev (TypeSafe)<br/>Choice: destination, cancel or unsupported;<br/>Choice: speak or quiet"]
     buf[("Session frame buffer<br/>last 4 frames")]
-    wrk["Worker<br/>locate, route once, follow hop by hop on votes;<br/>compares with previous output,<br/>Jev decides whether a change is spoken"]
+    wrk["Worker<br/>locate, route once, follow the route on votes;<br/>compares with previous output,<br/>Jev decides whether a change is spoken"]
     nav["Navigation engine: nav-engine's nav-api<br/>localize: frames to the user's node<br/>route: next hop and its instruction"]
     navmap[("Venue map<br/>published by nav-engine, reviewed")]
     route[("Place<br/>the map the phone chose;<br/>destinations: its nodes, by name")]
@@ -145,7 +145,7 @@ sequenceDiagram
 | Speech to text (ElevenLabs Scribe v2) | Audio to transcript | Meaning of the request |
 | Text to speech (ElevenLabs Flash v2.5) | Text to MP3 stream, proxied and cached by the Orchestrator | Wording, timing |
 | Jev (TypeSafe) | Turning a transcript into `start(destinationId)`, `cancel` or `unsupported`, and judging whether a changed direction is worth saying, each with a confidence | Route progress, wording |
-| Worker | The navigation loop: locating the user with `localize`, one `route`, following it hop by hop on votes, starting over when lost; comparing each output with the session's previous output, choosing guidance or heartbeat | Model internals, the map |
+| Worker | The navigation loop: locating the user with `localize`, one `route`, following it on votes (to the next node or one further on), starting over when lost; comparing each output with the session's previous output, choosing guidance or heartbeat | Model internals, the map |
 | Navigation engine (nav-engine's nav-api) | Which node of the venue map the frames show (`confirmed`, `uncertain` or `lost`), and the route to the destination with each hop's spoken instruction | The user's position between calls (it is stateless), deciding whether to speak |
 | Sentence templates | A fallback sentence per action, when the route hop has no instruction that fits 240 characters | Route validity |
 | Place | The map the phone chose (`GET /v1/maps`, default `NAV_MAP_ID`) and its destinations: every node, by name, read from nav-api when the client is created | Paths, which come from nav-api |
